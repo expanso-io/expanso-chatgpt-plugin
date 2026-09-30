@@ -95,25 +95,34 @@ export function redactForDiff(spec: JobSpec): JobSpec {
 
 type Marker = (secret: JsonValue) => string;
 
-function redactObject(spec: JobSpec, marker: Marker): JobSpec {
+function redactObject(
+  spec: JobSpec,
+  marker: Marker,
+  underSecret = false,
+): JobSpec {
   return Object.fromEntries(
     Object.entries(spec).map(([name, item]) => [
       name,
-      redactAt(item, name, marker),
+      redactAt(item, underSecret || SECRET_KEY.test(name), marker),
     ]),
   );
 }
 
-function redactAt(value: JsonValue, key: string, marker: Marker): JsonValue {
+/** Everything under a credential-looking key is hidden, however deep. */
+function redactAt(
+  value: JsonValue,
+  secret: boolean,
+  marker: Marker,
+): JsonValue {
   if (isJsonArray(value)) {
-    return value.map((item) => redactAt(item, key, marker));
+    return value.map((item) => redactAt(item, secret, marker));
   }
 
-  if (isJsonObject(value)) return redactObject(value, marker);
+  if (isJsonObject(value)) return redactObject(value, marker, secret);
 
   if (value === null || value === "") return value;
 
-  if (SECRET_KEY.test(key)) return marker(value);
+  if (secret) return marker(value);
 
   if (URL_CREDENTIALS.test(jsonText(value) ?? "")) return marker(value);
 
