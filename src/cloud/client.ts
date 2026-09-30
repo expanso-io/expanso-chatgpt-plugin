@@ -168,7 +168,9 @@ export class WorkspaceClient {
   ) {}
 
   nodeStats(): Promise<NodeStats> {
-    return this.get("/nodes/stats", NodeStatsSchema);
+    // The orchestrator serves stats at /nodes/-/stats; /nodes/stats is read as
+    // a node named "stats" and answers 404, whatever the API reference says.
+    return this.get("/nodes/-/stats", NodeStatsSchema);
   }
 
   listNodes(

@@ -212,7 +212,7 @@ describe("inventory past the cap", () => {
       fakeFetch({
         [`GET ${API}/jobs`]: paged(jobs),
         [`GET ${API}/nodes`]: paged(nodes),
-        [`GET ${API}/nodes/stats`]: () =>
+        [`GET ${API}/nodes/-/stats`]: () =>
           Response.json({
             total_nodes: nodes.length + 3,
             nodes_by_connection_state: {

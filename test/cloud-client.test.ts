@@ -97,7 +97,7 @@ describe("exchangeApiKey", () => {
 
 describe("WorkspaceClient", () => {
   const routes = {
-    [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
+    [`GET ${API}/nodes/-/stats`]: serve("node-stats.json"),
     [`GET ${API}/nodes`]: serve("nodes.json"),
     [`GET ${API}/jobs`]: serve("jobs.json"),
     [`GET ${API}/jobs/job-ingest-7f3a`]: serve("job.json"),
@@ -113,7 +113,7 @@ describe("WorkspaceClient", () => {
     const stats = await client.nodeStats();
 
     expect(stats.total_nodes).toBe(4);
-    expect(requests[0].url.href).toBe(`${API}/nodes/stats`);
+    expect(requests[0].url.href).toBe(`${API}/nodes/-/stats`);
 
     expect(requests[0].headers.get("authorization")).toBe("Bearer jwt-fixture");
   });
@@ -190,7 +190,7 @@ describe("WorkspaceClient", () => {
     const { fetch } = fakeFetch({
       [`GET ${API}/nodes`]: () =>
         Response.json({ items: null, next_token: "" }),
-      [`GET ${API}/nodes/stats`]: () =>
+      [`GET ${API}/nodes/-/stats`]: () =>
         Response.json({ total_nodes: 0, nodes_by_os: null }),
     });
 
@@ -231,7 +231,7 @@ describe("WorkspaceClient fetch binding", () => {
   // `this` other than the global scope, unlike Node's.
   function thisSensitiveFetch() {
     const { fetch: inner } = fakeFetch({
-      [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
+      [`GET ${API}/nodes/-/stats`]: serve("node-stats.json"),
     });
 
     return function (

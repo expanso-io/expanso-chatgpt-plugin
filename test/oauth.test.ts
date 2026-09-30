@@ -52,7 +52,7 @@ const config = {
 function cloudRoutes(claims = "claims-org-wide.json") {
   return {
     [`POST ${CLOUD}/api/v1/auth/token`]: serveToken(claims),
-    [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
+    [`GET ${API}/nodes/-/stats`]: serve("node-stats.json"),
     [`GET ${API}/nodes`]: serve("nodes.json"),
     // The fixture advertises a second page; that page is empty.
     [`GET ${API}/jobs`]: (request: RecordedRequest) =>
@@ -75,7 +75,7 @@ describe("linkAccount", () => {
 
     expect(requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "POST /api/v1/auth/token",
-      "GET /api/v1/nodes/stats",
+      "GET /api/v1/nodes/-/stats",
     ]);
 
     expect(props.workspaces).toEqual([
@@ -134,7 +134,7 @@ describe("linkAccount", () => {
   it("refuses a workspace that does not accept the key", async () => {
     const { fetch } = fakeFetch({
       ...cloudRoutes(),
-      [`GET ${API}/nodes/stats`]: fail(403, "forbidden"),
+      [`GET ${API}/nodes/-/stats`]: fail(403, "forbidden"),
     });
 
     await expect(
@@ -215,7 +215,7 @@ describe("linkAccount errors", () => {
   it("says when the workspace endpoint does not answer", async () => {
     const error = await link(API_KEY, ENDPOINT, {
       ...cloudRoutes(),
-      [`GET ${API}/nodes/stats`]: fail(404, "no route"),
+      [`GET ${API}/nodes/-/stats`]: fail(404, "no route"),
     }).result;
 
     expect(error?.field).toBe("endpoints");
@@ -227,7 +227,8 @@ describe("linkAccount errors", () => {
   it("says when the workspace answers in a shape it cannot read", async () => {
     const error = await link(API_KEY, ENDPOINT, {
       ...cloudRoutes(),
-      [`GET ${API}/nodes/stats`]: () => Response.json({ total_nodes: "many" }),
+      [`GET ${API}/nodes/-/stats`]: () =>
+        Response.json({ total_nodes: "many" }),
     }).result;
 
     expect(error?.field).toBe("endpoints");
@@ -241,7 +242,7 @@ describe("linkAccount errors", () => {
       config,
       encryptionKey: TEST_ENCRYPTION_KEY,
       fetch: (input, init) =>
-        input.includes("/api/v1/nodes/stats")
+        input.includes("/api/v1/nodes/-/stats")
           ? Promise.reject(new TypeError("network down"))
           : cloud.fetch(input, init),
     }).then(
