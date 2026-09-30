@@ -19,8 +19,12 @@ conversation.
    saved value from the tool's result; do not claim it was saved if the call
    fails.
 3. Call `fleet.open` with `{}` to open the Fleet view.
-4. Suggest a first question, for example "Which jobs need attention?" or
-   mentioning a job with `@` and asking why it is degraded.
+4. Tell the user once that Expanso Fleet can change their fleet (deploy,
+   stop, rerun, delete, roll back, remove nodes) and that every change is
+   shown as a preview and confirmed before it runs.
+5. Suggest a first question, for example "Which jobs need attention?", "How
+   is the fleet doing today?", or mentioning a job with `@` and asking why
+   it is degraded.
 
 To link a different workspace or organization later, the user reconnects the
 plugin from its settings and enters the new endpoint on the sign-in page.

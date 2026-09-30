@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "expanso-fleet",
-  "version": "0.1.0",
-  "description": "See your Expanso nodes, jobs, executions, and pipeline health from ChatGPT.",
+  "version": "0.2.0",
+  "description": "See and control your Expanso fleet from ChatGPT: dashboards, jobs, pipelines, and nodes.",
   "author": {
     "name": "Expanso",
     "url": "https://expanso.io"
@@ -16,16 +16,16 @@
       "onboardingSkill": "./skills/onboarding/SKILL.md",
       "interface": {
         "displayName": "Expanso",
-        "shortDescription": "Your Expanso jobs, nodes, and pipeline health",
-        "longDescription": "Open a Fleet view of your Expanso workspace, mention jobs and nodes with @, and ask why a job is degraded. The plugin reads node connectivity, job and execution state, state history, and a bounded snapshot of recent job logs. It cannot deploy, stop, or change anything.",
+        "shortDescription": "Dashboards and control for your Expanso fleet",
+        "longDescription": "Open a Fleet view with dashboards for your Expanso workspaces, mention jobs and nodes with @, ask why a job is degraded, and deploy, edit, stop, rerun, roll back, or delete jobs and pipelines. Every change is previewed with the nodes it reaches and a diff, and runs only after you confirm.",
         "developerName": "Expanso",
         "category": "Developer Tools",
-        "capabilities": ["Interactive", "Read"],
+        "capabilities": ["Interactive", "Read", "Write"],
         "websiteURL": "https://expanso.io",
         "defaultPrompt": [
           "What jobs do I have on the network?",
           "Which nodes are healthy and which are not?",
-          "What is failing right now, and why?",
+          "How is the fleet doing today?",
           "Open the Fleet view."
         ],
         "brandColor": "#6823CD",

@@ -1,6 +1,7 @@
 # Expanso Fleet for ChatGPT
 
-See your Expanso nodes, jobs, executions, and pipeline health from ChatGPT.
+See and control your Expanso fleet from ChatGPT: dashboards, jobs, pipelines,
+and nodes.
 
 Expanso Fleet is a ChatGPT plugin built on the
 [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
@@ -11,13 +12,18 @@ adds:
   that need attention, recent failed or degraded executions, and offline
   nodes for your default workspace, plus every job and every node grouped by
   health with filters and search.
+- **Dashboards.** Nodes reporting and CPU over the last 30 minutes,
+  executions placed, finished, and failed per hour over the last day, the
+  jobs failing most, and a detail page for every node and job.
+- **Fleets.** Every workspace this connection can see, which one is active,
+  when its key expires, and a status summary for each, with Switch inline.
+- **Fleet control.** Deploy and edit jobs and pipelines, stop, rerun,
+  delete, and roll back jobs, pause and resume rollouts, and remove nodes.
+  Every change is previewed first and ChatGPT asks you to confirm it.
 - **`@job` and `@node` mentions.** Type `@` in the composer to pick a job or
   node, then ask "why is this degraded?".
-- **Read-only tools** for nodes, jobs, executions with their state history,
-  recent errors, and a bounded snapshot of recent job logs.
-
-Phase 1 is read-only. The plugin cannot deploy, stop, rerun, or change
-anything in Expanso.
+- **Tools** for nodes, jobs, executions with their state history, recent
+  errors, and a bounded snapshot of recent job logs.
 
 ## How it works
 
@@ -25,10 +31,11 @@ anything in Expanso.
 ChatGPT ──OAuth 2.1 + PKCE──▶ Expanso Fleet service (Cloudflare Worker)
    │                              │  /authorize   linking page
    │                              │  /oauth/*     tokens, client registration
-   └──MCP (streamable HTTP)─────▶ │  /mcp         read-only tools, Fleet app
+   └──MCP (streamable HTTP)─────▶ │  /mcp         tools, Fleet app
                                   │
                                   ├─▶ Expanso Cloud   POST /api/v1/auth/token
-                                  └─▶ your workspace  GET  /api/v1/{nodes,jobs,executions}
+                                  └─▶ your workspace  GET  /api/v1/{nodes,jobs,executions,…}
+                                                      PUT/POST/DELETE  jobs, nodes
                                                       WS   /api/v1/jobs/{id}/logs
 ```
 
@@ -44,7 +51,7 @@ the OAuth authorization server that ChatGPT signs in through:
    key never reaches ChatGPT, the plugin package, plugin settings, logs, or
    tool results.
 4. On each tool call the service exchanges the key for a one-hour Expanso
-   token and reads only from the linked workspaces.
+   token and calls only the linked workspaces.
 
 Workspace endpoints must be Expanso hosts (by default `*.expanso.io`), so the
 service cannot be pointed at other hosts.
@@ -61,10 +68,11 @@ the stream. The model only ever sees that snapshot.
 | You type the workspace endpoint (Expanso Cloud: your workspace, then Endpoint). Several are allowed. | Pick the organization and workspace from a list.              |
 | Logs are a capped read of the live stream.                                                           | A bounded log snapshot endpoint with cursors.                 |
 | The key button opens Expanso Cloud; you open your workspace, then Keys.                              | Link straight to the workspace's Keys page.                   |
+| Fleets lists the workspaces this connection links, with status from each.                            | Every workspace you can reach, with status from Cloud.        |
 
-Expanso Cloud API keys have no read-only scope yet: the key you paste has full
-access to its workspace. Expanso Fleet only reads, and the key stays sealed on
-the service.
+The key you paste has full access to its workspace, and Expanso Fleet uses
+it to make the changes you confirm. It stays sealed on the service. Revoke it
+in Expanso Cloud to cut off access.
 
 These are tracked in expanso-io/expanso-cloud. The plugin stays a personal
 install until "Sign in with Expanso" ships; it is not in the public plugin
@@ -109,20 +117,65 @@ work the same way; the onboarding skill is only in the plugin package.
 
 ## Tools
 
+Tools that read:
+
 | Tool              | What it returns                                                         |
 | ----------------- | ----------------------------------------------------------------------- |
 | `fleet.open`      | The Fleet view (sidebar entry point).                                   |
 | `fleet_overview`  | Every job and node: counts first (healthy vs not), then items by state. |
+| `fleet_dashboard` | Health over time, executions and failures per hour, per-node load.      |
+| `node_dashboard`  | One node: CPU, memory, and disk over 30 minutes, and its executions.    |
+| `job_dashboard`   | One job: state on every node, failures per hour, history, versions.     |
+| `list_fleets`     | Every reachable workspace, active and connected ones, status for each.  |
 | `list_nodes`      | Nodes with connectivity, labels, and resource usage.                    |
 | `get_node`        | One node and the executions placed on it.                               |
 | `list_jobs`       | Jobs with state; `degraded` is filtered locally.                        |
 | `get_job`         | One job with its executions and history.                                |
+| `get_job_spec`    | A job's spec as YAML, credentials shown as `[redacted]`.                |
 | `list_executions` | Executions for a job or node, by state.                                 |
 | `get_execution`   | One execution with its state transitions and failure messages.          |
 | `recent_errors`   | The latest failed, degraded, or lost executions, with history.          |
 | `get_job_logs`    | A bounded log snapshot for a job from one node.                         |
+| `preview_change`  | A preview of any change below; changes nothing (see below).             |
 | `get_profile`     | The linked Expanso account, for telling connections apart.              |
 | `settings.*`      | Read or change `defaultWorkspaceId` (a plugin preference, not Expanso). |
+
+Tools that change the fleet. ChatGPT asks you to confirm each one; the
+destructive ones are marked so ChatGPT says they cannot be undone.
+
+| Tool             | Expanso API call                                         | Destructive                   |
+| ---------------- | -------------------------------------------------------- | ----------------------------- |
+| `deploy_job`     | `PUT /jobs` (create or update by name), `PUT /jobs/{id}` | Yes (overwrites a job's spec) |
+| `stop_job`       | `POST /jobs/{id}/stop`                                   | Yes                           |
+| `rerun_job`      | `PUT /jobs/{id}/rerun`                                   | No                            |
+| `delete_job`     | `DELETE /jobs/{id}`                                      | Yes                           |
+| `rollback_job`   | `POST /jobs/{id}/rollback`                               | Yes                           |
+| `pause_rollout`  | `POST /jobs/{id}/rollout/pause`                          | No                            |
+| `resume_rollout` | `POST /jobs/{id}/rollout/resume`                         | No                            |
+| `delete_node`    | `DELETE /nodes/{id}`                                     | Yes                           |
+
+### How a change is confirmed
+
+1. `preview_change` validates the change with the workspace (a dry run for
+   deploys and rollbacks) and returns a preview: the job or node by name, the
+   connected nodes it reaches, a diff for edits, and any warnings. It changes
+   nothing.
+2. The preview's `next.arguments` carry that summary, target nodes, and diff,
+   plus a token that signs them for this account for 10 minutes. ChatGPT
+   shows those arguments when it asks you to confirm.
+3. The write tool runs only when its arguments match the signed preview, and
+   refuses an edit or rollback if the job changed after the preview.
+
+Specs shown in chat hide values under credential-looking keys (password,
+token, key, secret, connection string, and similar) and URLs with embedded
+passwords. Leave `[redacted]` in an edited spec to keep the current value.
+The Fleet view's buttons use the same previews and show them before you
+confirm.
+
+Not available, because the Expanso API has no endpoint for them: setting
+node labels (nodes report their own), draining or cordoning a node, and
+approving or rejecting nodes. Per-pipeline throughput in messages or bytes is
+not readable with an API key, so dashboards count executions instead.
 
 Mentions resolve to `expanso://workspaces/{workspace}/jobs/{id}` and
 `expanso://workspaces/{workspace}/nodes/{id}` resources.
