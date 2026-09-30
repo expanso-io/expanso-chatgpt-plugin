@@ -1,0 +1,9 @@
+{
+  "sub": "usr_fixture_1",
+  "email": "operator@example.com",
+  "organizationId": "org_fixture",
+  "role": "user",
+  "networkId": "*",
+  "aud": "urn:expanso:orchestrator",
+  "exp": 1893456000
+}

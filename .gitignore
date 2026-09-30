@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+app/dist/
+
+# Local and pilot credentials and deployment identifiers. Never commit these.
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.pilot.example
+!.dev.vars.example
+wrangler.pilot.jsonc
+
+# Local tool state: every top-level dot-directory except CI configuration.
+/.*/
+!/.github/
+.DS_Store
+*.log
+src/generated/

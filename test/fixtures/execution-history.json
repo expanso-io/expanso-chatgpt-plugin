@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "seq_num": 11,
+      "timestamp": "2026-09-30T18:30:00Z",
+      "message": "Execution running",
+      "execution_id": "exec-aa01",
+      "job_id": "job-ingest-7f3a"
+    },
+    {
+      "seq_num": 12,
+      "timestamp": "2026-09-30T18:39:00Z",
+      "message": "Execution degraded: output connection refused",
+      "execution_id": "exec-aa01",
+      "job_id": "job-ingest-7f3a",
+      "details": { "error_code": "OUTPUT_UNAVAILABLE" }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `npm run dev`. .dev.vars is gitignored.
+# Generate a key with: node -e "console.log(crypto.randomBytes(32).toString('base64'))"
+LINK_ENCRYPTION_KEY=
+# Optional overrides
+# EXPANSO_CLOUD_URL=https://cloud.expanso.io
+# EXPANSO_CONSOLE_URL=https://cloud.expanso.io
+# ALLOWED_ENDPOINT_SUFFIXES=.expanso.io

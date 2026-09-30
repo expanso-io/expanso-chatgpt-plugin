@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "id": "node-edge-01",
+      "spec": {
+        "name": "edge-01",
+        "hostname": "edge01.example.com",
+        "os": "linux",
+        "arch": "amd64",
+        "agent_version": "1.4.0",
+        "labels": { "site": "plant-a" }
+      },
+      "status": {
+        "connection_state": "connected",
+        "last_heartbeat": "2026-09-30T18:59:40Z",
+        "message": "Healthy",
+        "resource_usage": {
+          "cpu_percent": 41.5,
+          "memory_percent": 22,
+          "disk_percent": 18
+        }
+      }
+    },
+    {
+      "id": "node-edge-02",
+      "spec": {
+        "name": "edge-02",
+        "hostname": "edge02.example.com",
+        "os": "linux",
+        "arch": "arm64",
+        "agent_version": "1.4.0"
+      },
+      "status": {
+        "connection_state": "lost",
+        "last_heartbeat": "2026-09-30T14:12:03Z",
+        "disconnected_since": "2026-09-30T14:13:00Z"
+      }
+    }
+  ],
+  "next_token": ""
+}

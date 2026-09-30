@@ -1,0 +1,19 @@
+{
+  "streams": [
+    {
+      "stream": {
+        "service_name": "expanso-edge",
+        "pipeline_id": "job-ingest-7f3a",
+        "node_id": "node-edge-02",
+        "level": "error"
+      },
+      "values": [
+        [
+          "1790795940000000000",
+          "output: dial tcp 10.0.0.5:9000: connection refused"
+        ],
+        ["1790795941000000000", "output: retrying in 2s"]
+      ]
+    }
+  ]
+}

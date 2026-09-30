@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": "exec-aa01",
+      "job_id": "job-ingest-7f3a",
+      "job_version": 4,
+      "node_id": "node-edge-02",
+      "job_spec": { "config": { "input": { "secret_ref": "must-not-leak" } } },
+      "status": {
+        "desired_state": { "state_type": "running" },
+        "observed_state": {
+          "state_type": "degraded",
+          "message": "output: connection refused (retrying)"
+        },
+        "updated_at": "2026-09-30T18:39:00Z"
+      }
+    }
+  ]
+}
