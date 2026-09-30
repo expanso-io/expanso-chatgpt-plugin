@@ -55,7 +55,7 @@ const DEFAULT_TOKEN_SECONDS = 3600;
  * Expanso Cloud's edge firewall rejects requests without a User-Agent, and
  * Worker fetch sends none by default, so every outbound call names itself.
  */
-export const USER_AGENT = "expanso-fleet-mcp/0.1.0";
+export const USER_AGENT = "expanso-fleet-mcp/0.2.0";
 
 export class CloudApiError extends Error {
   constructor(

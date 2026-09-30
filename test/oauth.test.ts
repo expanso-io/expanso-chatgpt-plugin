@@ -24,6 +24,7 @@ import {
   TEST_ENCRYPTION_KEY,
   fail,
   fakeFetch,
+  reply,
   serve,
   serveToken,
   type RecordedRequest,
@@ -375,6 +376,25 @@ const ToolListSchema = z.object({
           .optional(),
       }),
     ),
+  }),
+});
+
+const ToolCallSchema = z.object({
+  result: z.object({
+    isError: z.boolean().optional(),
+    content: z.array(z.object({ text: z.string() })),
+  }),
+});
+
+const PreviewCallSchema = z.object({
+  result: z.object({
+    content: z.array(z.object({ text: z.string() })),
+    structuredContent: z.object({
+      next: z.object({
+        tool: z.string(),
+        arguments: z.record(z.string(), z.json()),
+      }),
+    }),
   }),
 });
 
@@ -783,6 +803,67 @@ describe("OAuth front door", () => {
       running: 1,
       failed: 1,
     });
+
+    // A change runs only with the preview's own arguments.
+    const control = fakeFetch({
+      ...cloudRoutes(),
+      [`GET ${API}/jobs/job-ingest-7f3a`]: serve("job.json"),
+      [`GET ${API}/jobs/job-ingest-7f3a/executions`]: reply({
+        items: [{ id: "ex-1", node_id: "node-a" }],
+      }),
+      [`POST ${API}/jobs/job-ingest-7f3a/stop`]: reply({
+        job_id: "job-ingest-7f3a",
+      }),
+    });
+
+    vi.stubGlobal("fetch", control.fetch);
+
+    const previewCall = PreviewCallSchema.parse(
+      await (
+        await rpc(5, "tools/call", {
+          name: "preview_change",
+          arguments: { action: "stop_job", jobId: "job-ingest-7f3a" },
+        })
+      ).json(),
+    );
+
+    const next = previewCall.result.structuredContent.next;
+
+    expect(next.tool).toBe("stop_job");
+    expect(previewCall.result.content[0].text).toContain(
+      'DESTRUCTIVE: Stop job "ingest-sensors"',
+    );
+
+    const stops = () =>
+      control.requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.pathname.endsWith("/stop"),
+      );
+
+    const tampered = ToolCallSchema.parse(
+      await (
+        await rpc(6, "tools/call", {
+          name: "stop_job",
+          arguments: { ...next.arguments, jobId: "job-other" },
+        })
+      ).json(),
+    );
+
+    expect(tampered.result.isError).toBe(true);
+    expect(stops()).toHaveLength(0);
+
+    const stopped = ToolCallSchema.parse(
+      await (
+        await rpc(7, "tools/call", {
+          name: "stop_job",
+          arguments: next.arguments,
+        })
+      ).json(),
+    );
+
+    expect(stopped.result.isError).not.toBe(true);
+    expect(stopped.result.content[0].text).toContain("Done. Stop job");
+    expect(stops()).toHaveLength(1);
   });
 
   const ToolTextSchema = z.object({
