@@ -279,7 +279,10 @@ export class WorkspaceClient {
   ): Promise<z.output<Schema>> {
     const url = `https://${this.endpoint}/api/v1${path}${toQueryString(query)}`;
 
-    const response = await this.fetchImpl(url, {
+    // Workers' fetch throws "Illegal invocation" when called as a method.
+    const fetchImpl = this.fetchImpl;
+
+    const response = await fetchImpl(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.accessToken}`,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CloudApiError,
   WorkspaceClient,
@@ -209,5 +209,43 @@ describe("toQueryString", () => {
     ).toBe("?states=a&states=b&limit=5");
 
     expect(toQueryString({})).toBe("");
+  });
+});
+
+describe("WorkspaceClient fetch binding", () => {
+  // Workers' global fetch throws "Illegal invocation" when called with any
+  // `this` other than the global scope, unlike Node's.
+  function thisSensitiveFetch() {
+    const { fetch: inner } = fakeFetch({
+      [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
+    });
+
+    return function (this: unknown, ...args: Parameters<typeof inner>) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+
+      return inner(...args);
+    } as typeof inner;
+  }
+
+  it("calls an injected global-style fetch unbound", async () => {
+    const client = new WorkspaceClient(ENDPOINT, "jwt", thisSensitiveFetch());
+
+    await expect(client.nodeStats()).resolves.toMatchObject({ total_nodes: 4 });
+  });
+
+  it("calls the default global fetch unbound", async () => {
+    vi.stubGlobal("fetch", thisSensitiveFetch());
+
+    try {
+      const client = new WorkspaceClient(ENDPOINT, "jwt");
+
+      await expect(client.nodeStats()).resolves.toMatchObject({
+        total_nodes: 4,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
