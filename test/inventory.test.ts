@@ -276,6 +276,15 @@ describe("inventory past the cap", () => {
       nextToken: String(INVENTORY_CAP),
     });
 
+    const text = describeInventory(first, "nodes");
+
+    expect(text).toContain(
+      `Nodes: ${nodes.length} total, ${nodes.length - 5} healthy (connected), 5 not healthy.`,
+    );
+    expect(text).toContain(
+      `The nodes below are listed from the first ${INVENTORY_CAP} loaded; the workspace has more that are not listed.`,
+    );
+
     const next = await inventoryPage(
       client(),
       "ws1",
@@ -290,5 +299,54 @@ describe("inventory past the cap", () => {
     expect(all.groups.reduce((sum, group) => sum + group.count, 0)).toBe(
       nodes.length,
     );
+  });
+});
+
+describe("mergeInventory", () => {
+  const group = (state: string, healthy: boolean, ids: string[]) => ({
+    state,
+    healthy,
+    count: ids.length,
+    items: ids.map((id) => ({ id })),
+  });
+
+  it("skips rows that shifted into the next page and counts only new ones", () => {
+    const loaded = {
+      total: 3,
+      healthy: 2,
+      notHealthy: 1,
+      countsComplete: false,
+      nextToken: "3",
+      groups: [
+        group("failed", false, ["c"]),
+        group("running", true, ["a", "b"]),
+      ],
+    };
+
+    const page = {
+      total: 3,
+      healthy: 2,
+      notHealthy: 1,
+      countsComplete: true,
+      groups: [
+        group("failed", false, ["e"]),
+        group("running", true, ["b", "d"]),
+      ],
+    };
+
+    const merged = mergeInventory(loaded, page);
+
+    expect(merged).toMatchObject({
+      total: 5,
+      healthy: 3,
+      notHealthy: 2,
+      countsComplete: true,
+    });
+    expect(
+      merged.groups.map((g) => [g.state, g.count, g.items.map((i) => i.id)]),
+    ).toEqual([
+      ["failed", 2, ["c", "e"]],
+      ["running", 3, ["a", "b", "d"]],
+    ]);
   });
 });

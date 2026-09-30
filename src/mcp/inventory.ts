@@ -248,6 +248,16 @@ function jobCounts(jobs: WorkspaceInventory["jobs"]): string {
   return `Jobs: ${jobs.total} total, ${jobs.healthy} healthy (running or completed), ${jobs.notHealthy} not healthy${partial(jobs)}.`;
 }
 
+function listedFrom(inventory: KindInventory<unknown>, noun: string): string[] {
+  if (inventory.nextToken === undefined) return [];
+
+  const loaded = inventory.groups.reduce((sum, group) => sum + group.count, 0);
+
+  return [
+    `The ${noun} below are listed from the first ${loaded} loaded; the workspace has more that are not listed.`,
+  ];
+}
+
 /** Count lines only, for results whose items are read by the app. */
 export function describeCounts(inventory: InventoryPage): string {
   const lines: string[] = [];
@@ -268,11 +278,19 @@ export function describeInventory(
   const { jobs, nodes } = inventory;
 
   if (include !== "jobs") {
-    lines.push(nodeCounts(nodes), ...describeGroups(nodes.groups, true));
+    lines.push(
+      nodeCounts(nodes),
+      ...listedFrom(nodes, "nodes"),
+      ...describeGroups(nodes.groups, true),
+    );
   }
 
   if (include !== "nodes") {
-    lines.push(jobCounts(jobs), ...describeGroups(jobs.groups, false));
+    lines.push(
+      jobCounts(jobs),
+      ...listedFrom(jobs, "jobs"),
+      ...describeGroups(jobs.groups, false),
+    );
   }
 
   return lines.join("\n");

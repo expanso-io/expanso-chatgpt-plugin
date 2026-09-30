@@ -22,11 +22,15 @@ export function sortGroups<View>(
   );
 }
 
-/** Adds a continuation page to what is already loaded. */
-export function mergeInventory<View>(
+/** Adds a continuation page to what is already loaded, skipping rows already shown. */
+export function mergeInventory<View extends { id: string }>(
   loaded: KindInventory<View>,
   page: KindInventory<View>,
 ): KindInventory<View> {
+  const seen = new Set(
+    loaded.groups.flatMap((group) => group.items.map((item) => item.id)),
+  );
+
   const groups = new Map(
     loaded.groups.map((group) => [
       group.state,
@@ -34,23 +38,36 @@ export function mergeInventory<View>(
     ]),
   );
 
+  let added = 0;
+  let addedHealthy = 0;
+
   for (const group of page.groups) {
+    const fresh = group.items.filter((item) => !seen.has(item.id));
+
+    if (fresh.length === 0) continue;
+
+    for (const item of fresh) seen.add(item.id);
+
+    added += fresh.length;
+
+    if (group.healthy) addedHealthy += fresh.length;
+
     const existing = groups.get(group.state);
 
     if (existing) {
-      existing.count += group.count;
-      existing.items.push(...group.items);
+      existing.count += fresh.length;
+      existing.items.push(...fresh);
     } else {
-      groups.set(group.state, { ...group, items: [...group.items] });
+      groups.set(group.state, { ...group, count: fresh.length, items: fresh });
     }
   }
 
   const counts = loaded.countsComplete
     ? loaded
     : {
-        total: loaded.total + page.total,
-        healthy: loaded.healthy + page.healthy,
-        notHealthy: loaded.notHealthy + page.notHealthy,
+        total: loaded.total + added,
+        healthy: loaded.healthy + addedHealthy,
+        notHealthy: loaded.notHealthy + added - addedHealthy,
       };
 
   return {
