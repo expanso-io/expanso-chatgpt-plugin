@@ -6,7 +6,7 @@ const root = new URL("..", import.meta.url);
 
 const html = await readFile(new URL("app/dist/index.html", root), "utf8");
 
-const icon = await readFile(new URL("assets/icon.svg", root), "utf8");
+const icon = await readFile(new URL("plugin/assets/icon.svg", root), "utf8");
 
 await mkdir(new URL("src/generated/", root), { recursive: true });
 

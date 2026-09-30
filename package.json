@@ -11,7 +11,7 @@
   "scripts": {
     "build:app": "vite build --config app/vite.config.ts && node scripts/embed-app.mjs",
     "build": "npm run build:app && npm run build:worker",
-    "build:plugin": "node scripts/build-plugin.mjs",
+    "build:plugin": "npm run build && node scripts/build-plugin.mjs",
     "dev": "npm run build:app && wrangler dev",
     "deploy:pilot": "npm run build:app && node scripts/deploy-pilot.mjs",
     "lint": "eslint .",
@@ -39,7 +39,6 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "eslint": "10.11.0",
-    "miniflare": "5.20260930.0-alpha",
     "prettier": "3.9.9",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
