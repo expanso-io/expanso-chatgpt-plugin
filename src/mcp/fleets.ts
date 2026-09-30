@@ -20,7 +20,7 @@ export interface FleetsInput {
   directory: FleetDirectory;
   linked: readonly LinkedWorkspace[];
   activeWorkspaceId: string;
-  /** Epoch ms when the linked key stops working; undefined when unknown. */
+  /** When the linked key stops working (ISO 8601); null for no expiry, undefined when unknown. */
   keyExpiresAt?: string | null;
   client: (workspaceId: string) => Promise<StatusClient>;
   now?: Date;
