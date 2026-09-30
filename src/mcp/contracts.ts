@@ -108,8 +108,10 @@ const inventoryOf = <Item extends z.ZodType>(item: Item) =>
     total: z.number(),
     healthy: z.number(),
     notHealthy: z.number(),
-    /** True when the workspace has more rows than were read. */
-    truncated: z.boolean(),
+    /** False when the counts cover only the rows loaded so far. */
+    countsComplete: z.boolean(),
+    /** Continues the list when the workspace has more rows than were read. */
+    nextToken: z.string().optional(),
     groups: z.array(groupOf(item)),
   });
 
@@ -126,5 +128,21 @@ export interface InventoryGroup<View> {
   count: number;
   items: View[];
 }
+
+export interface KindInventory<View> {
+  total: number;
+  healthy: number;
+  notHealthy: number;
+  countsComplete: boolean;
+  nextToken?: string;
+  groups: InventoryGroup<View>[];
+}
+
+export const InventoryPageSchema = WorkspaceInventorySchema.partial({
+  jobs: true,
+  nodes: true,
+});
+
+export type InventoryPage = z.infer<typeof InventoryPageSchema>;
 
 export type WorkspaceInventory = z.infer<typeof WorkspaceInventorySchema>;

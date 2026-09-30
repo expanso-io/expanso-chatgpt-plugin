@@ -17,7 +17,9 @@ import type { ExecutionState } from "../cloud/types.js";
 import { describeFleet, fleetSummary, listFiltered } from "./fleet.js";
 import type { WorkspaceInventory } from "./contracts.js";
 import {
+  describeCounts,
   describeInventory,
+  inventoryPage,
   trimGroups,
   workspaceInventory,
 } from "./inventory.js";
@@ -235,16 +237,34 @@ export function buildServer(options: ServerOptions): McpServer {
     "fleet.inventory",
     {
       title: "Load every job and node",
-      inputSchema: z.object({ workspaceId: workspaceArg }),
+      inputSchema: z.object({
+        workspaceId: workspaceArg,
+        kind: z
+          .enum(["jobs", "nodes"])
+          .optional()
+          .describe("The list to continue. Required with nextToken."),
+        nextToken: z
+          .string()
+          .optional()
+          .describe("The nextToken of that list from an earlier result."),
+      }),
       annotations: readOnly,
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ workspaceId }) => {
+    async ({ workspaceId, kind, nextToken }) => {
+      if (nextToken !== undefined && kind === undefined) {
+        throw new Error("Say which list to continue: kind is jobs or nodes.");
+      }
+
       const workspace = await account.workspace(workspaceId);
       const client = await account.client(workspace.workspaceId);
-      const inventory = await workspaceInventory(client, workspace.workspaceId);
 
-      return result({ ...inventory }, describeInventory(inventory, "both"));
+      const inventory =
+        nextToken !== undefined && kind !== undefined
+          ? await inventoryPage(client, workspace.workspaceId, kind, nextToken)
+          : await workspaceInventory(client, workspace.workspaceId);
+
+      return result({ ...inventory }, describeCounts(inventory));
     },
   );
 

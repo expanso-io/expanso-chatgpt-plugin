@@ -20,6 +20,8 @@ interface PanelProps<View extends Item> {
   noun: string;
   inventory: WorkspaceInventory["jobs"] | WorkspaceInventory["nodes"];
   groups: InventoryGroup<View>[];
+  busy: boolean;
+  onLoadMore: () => void;
   renderItem: (item: View) => ReactNode;
 }
 
@@ -32,6 +34,8 @@ function Panel<View extends Item>({
   noun,
   inventory,
   groups,
+  busy,
+  onLoadMore,
   renderItem,
 }: PanelProps<View>) {
   const [health, setHealth] = useState<Health>("all");
@@ -58,6 +62,7 @@ function Panel<View extends Item>({
       .filter((group) => group.items.length > 0);
   }, [groups, health, state, query]);
 
+  const loaded = groups.reduce((sum, group) => sum + group.count, 0);
   const matching = visible.reduce((sum, group) => sum + group.items.length, 0);
   let budget = shown;
 
@@ -107,10 +112,19 @@ function Panel<View extends Item>({
           setShown(PAGE);
         }}
       />
-      {inventory.truncated && (
+      {inventory.nextToken && (
         <p className="note">
-          This workspace has more {noun} than were loaded; counts cover the
-          first {inventory.total}.
+          {inventory.countsComplete
+            ? `Counts cover all ${inventory.total} ${noun}; the list shows the ${loaded} loaded so far.`
+            : `This workspace has more ${noun} than are loaded; counts cover the ${loaded} loaded so far.`}{" "}
+          <button
+            type="button"
+            className="btn btn-secondary cursor-interaction"
+            disabled={busy}
+            onClick={onLoadMore}
+          >
+            Load more {noun}
+          </button>
         </p>
       )}
       {matching === 0 && <p className="empty">No {noun} match.</p>}
@@ -169,9 +183,13 @@ function Chip({
 
 export function JobsPanel({
   inventory,
+  busy,
+  onLoadMore,
   renderJob,
 }: {
   inventory: WorkspaceInventory["jobs"];
+  busy: boolean;
+  onLoadMore: () => void;
   renderJob: (job: JobView) => ReactNode;
 }) {
   return (
@@ -179,6 +197,8 @@ export function JobsPanel({
       noun="jobs"
       inventory={inventory}
       groups={inventory.groups}
+      busy={busy}
+      onLoadMore={onLoadMore}
       renderItem={renderJob}
     />
   );
@@ -186,9 +206,13 @@ export function JobsPanel({
 
 export function NodesPanel({
   inventory,
+  busy,
+  onLoadMore,
   renderNode,
 }: {
   inventory: WorkspaceInventory["nodes"];
+  busy: boolean;
+  onLoadMore: () => void;
   renderNode: (node: NodeView) => ReactNode;
 }) {
   return (
@@ -196,6 +220,8 @@ export function NodesPanel({
       noun="nodes"
       inventory={inventory}
       groups={inventory.groups}
+      busy={busy}
+      onLoadMore={onLoadMore}
       renderItem={renderNode}
     />
   );

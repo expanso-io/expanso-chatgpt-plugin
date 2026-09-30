@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceClient } from "../src/cloud/client.js";
 import {
   collectAll,
+  describeCounts,
   describeInventory,
+  INVENTORY_CAP,
+  inventoryPage,
   trimGroups,
   workspaceInventory,
 } from "../src/mcp/inventory.js";
+import { mergeInventory } from "../src/mcp/groups.js";
 import { fakeFetch, type Route } from "./helpers.js";
 
 const ENDPOINT = "ws1.us1.cloud.expanso.io:9010";
@@ -57,7 +61,7 @@ describe("collectAll", () => {
     );
 
     expect(all.items).toHaveLength(2500);
-    expect(all.truncated).toBe(false);
+    expect(all.nextToken).toBeUndefined();
     expect(requests.map((r) => r.url.searchParams.get("limit"))).toEqual([
       "1000",
       "1000",
@@ -65,7 +69,7 @@ describe("collectAll", () => {
     ]);
   });
 
-  it("stops at the cap and says the list is truncated", async () => {
+  it("stops at the cap and returns where to continue", async () => {
     const rows = Array.from({ length: 30 }, (_, i) => job(`j${i}`, "running"));
     const { fetch } = fakeFetch({ [`GET ${API}/jobs`]: paged(rows) });
     const client = new WorkspaceClient(ENDPOINT, "jwt", fetch);
@@ -77,7 +81,7 @@ describe("collectAll", () => {
     );
 
     expect(all.items).toHaveLength(20);
-    expect(all.truncated).toBe(true);
+    expect(all.nextToken).toBe("20");
   });
 });
 
@@ -115,8 +119,9 @@ describe("workspaceInventory", () => {
       total: 4,
       healthy: 2,
       notHealthy: 2,
-      truncated: false,
+      countsComplete: true,
     });
+    expect(inventory.nodes.nextToken).toBeUndefined();
     expect(inventory.jobs).toMatchObject({
       total: 6,
       healthy: 3,
@@ -188,5 +193,102 @@ describe("workspaceInventory", () => {
     );
 
     expect(text).toContain("- 2 running: job-a, and 1 more");
+  });
+});
+
+describe("inventory past the cap", () => {
+  const jobs = Array.from({ length: INVENTORY_CAP + 500 }, (_, i) =>
+    job(`j${i}`, i % 10 === 0 ? "failed" : "running"),
+  );
+
+  const nodes = Array.from({ length: INVENTORY_CAP + 200 }, (_, i) =>
+    node(`n${i}`, i < 5 ? "lost" : "connected"),
+  );
+
+  const client = () =>
+    new WorkspaceClient(
+      ENDPOINT,
+      "jwt",
+      fakeFetch({
+        [`GET ${API}/jobs`]: paged(jobs),
+        [`GET ${API}/nodes`]: paged(nodes),
+        [`GET ${API}/nodes/stats`]: () =>
+          Response.json({
+            total_nodes: nodes.length + 3,
+            nodes_by_connection_state: {
+              connected: nodes.length - 5,
+              lost: 5,
+              deleted: 3,
+            },
+          }),
+      }).fetch,
+    );
+
+  it("returns a token per kind, and the token loads the rest", async () => {
+    const first = await workspaceInventory(client(), "ws1");
+
+    expect(first.jobs).toMatchObject({
+      total: INVENTORY_CAP,
+      countsComplete: false,
+      nextToken: String(INVENTORY_CAP),
+    });
+    expect(describeCounts(first)).toContain(
+      `Jobs: ${INVENTORY_CAP} total, 4500 healthy (running or completed), 500 not healthy (counts cover only the rows loaded so far; the workspace has more).`,
+    );
+
+    const next = await inventoryPage(
+      client(),
+      "ws1",
+      "jobs",
+      first.jobs.nextToken!,
+    );
+
+    expect(next.nodes).toBeUndefined();
+    expect(next.jobs).toMatchObject({ total: 500, countsComplete: true });
+    expect(next.jobs!.nextToken).toBeUndefined();
+
+    const all = mergeInventory(first.jobs, next.jobs!);
+
+    expect(all).toMatchObject({
+      total: jobs.length,
+      healthy: 4950,
+      notHealthy: 550,
+      countsComplete: true,
+    });
+    expect(all.nextToken).toBeUndefined();
+    expect(all.groups.map((group) => [group.state, group.count])).toEqual([
+      ["failed", 550],
+      ["running", 4950],
+    ]);
+    expect(
+      new Set(all.groups.flatMap((group) => group.items.map((j) => j.id))).size,
+    ).toBe(jobs.length);
+  });
+
+  it("takes node counts from node stats while the list continues", async () => {
+    const first = await workspaceInventory(client(), "ws1");
+
+    expect(first.nodes).toMatchObject({
+      total: nodes.length,
+      healthy: nodes.length - 5,
+      notHealthy: 5,
+      countsComplete: true,
+      nextToken: String(INVENTORY_CAP),
+    });
+
+    const next = await inventoryPage(
+      client(),
+      "ws1",
+      "nodes",
+      first.nodes.nextToken!,
+    );
+
+    const all = mergeInventory(first.nodes, next.nodes!);
+
+    expect(all.total).toBe(nodes.length);
+    expect(all.nextToken).toBeUndefined();
+    expect(all.groups.reduce((sum, group) => sum + group.count, 0)).toBe(
+      nodes.length,
+    );
   });
 });

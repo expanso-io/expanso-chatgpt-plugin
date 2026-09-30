@@ -10,12 +10,14 @@ import { createRoot } from "react-dom/client";
 import type { z } from "zod";
 import {
   FleetSummarySchema,
+  InventoryPageSchema,
   JobDetailSchema,
   WorkspaceInventorySchema,
   type FleetSummary,
   type JobDetail,
   type WorkspaceInventory,
 } from "../../src/mcp/contracts.js";
+import { mergeInventory } from "../../src/mcp/groups.js";
 import { JobsPanel, NodesPanel } from "./inventory.js";
 import "./fleet.css";
 
@@ -122,27 +124,40 @@ function Fleet() {
   const [tab, setTab] = useState<"attention" | "jobs" | "nodes">("attention");
   const [inventory, setInventory] = useState<WorkspaceInventory>();
   const [inventoryError, setInventoryError] = useState<string>();
+  const [inventoryLoads, setInventoryLoads] = useState(0);
+  const workspaceId = summary?.workspace.id;
 
-  const loadInventory = async () => {
-    setInventoryError(undefined);
-
-    try {
-      setInventory(
-        await callTool("fleet.inventory", {}, WorkspaceInventorySchema),
-      );
-    } catch (caught) {
-      setInventoryError(
-        caught instanceof Error ? caught.message : "Could not load the list.",
-      );
-    }
-  };
-
-  const summaryLoaded = summary !== undefined;
-
-  // The whole inventory loads after the first paint, from the app only.
+  // The whole inventory loads after the first paint, from the app only, and
+  // again whenever the summary moves to another workspace.
   useEffect(() => {
-    if (summaryLoaded) void loadInventory();
-  }, [summaryLoaded]);
+    if (!workspaceId) return;
+
+    let current = true;
+
+    setInventoryError(undefined);
+    setInventory((loaded) =>
+      loaded?.workspaceId === workspaceId ? loaded : undefined,
+    );
+
+    callTool("fleet.inventory", { workspaceId }, WorkspaceInventorySchema).then(
+      (loaded) => {
+        if (current) setInventory(loaded);
+      },
+      (caught: unknown) => {
+        if (current) {
+          setInventoryError(
+            caught instanceof Error
+              ? caught.message
+              : "Could not load the list.",
+          );
+        }
+      },
+    );
+
+    return () => {
+      current = false;
+    };
+  }, [workspaceId, inventoryLoads]);
 
   useEffect(() => {
     setSummaryFromHost = setSummary;
@@ -170,7 +185,36 @@ function Fleet() {
   const refresh = () =>
     run(async () => {
       setSummary(await callTool("fleet.summary", {}, FleetSummarySchema));
-      await loadInventory();
+      setInventoryLoads((count) => count + 1);
+    });
+
+  const loadMore = (kind: "jobs" | "nodes") =>
+    run(async () => {
+      const from = inventory;
+      const nextToken = from?.[kind].nextToken;
+
+      if (!from || !nextToken) return;
+
+      const page = await callTool(
+        "fleet.inventory",
+        { workspaceId: from.workspaceId, kind, nextToken },
+        InventoryPageSchema,
+      );
+
+      if (!page[kind]) throw new Error("The next page was not understood.");
+
+      setInventory((loaded) => {
+        if (
+          loaded?.workspaceId !== from.workspaceId ||
+          loaded[kind].nextToken !== nextToken
+        ) {
+          return loaded;
+        }
+
+        return page.jobs
+          ? { ...loaded, jobs: mergeInventory(loaded.jobs, page.jobs) }
+          : { ...loaded, nodes: mergeInventory(loaded.nodes, page.nodes!) };
+      });
     });
 
   const openJob = (jobId: string) =>
@@ -330,6 +374,8 @@ function Fleet() {
       {tab === "jobs" && inventory && (
         <JobsPanel
           inventory={inventory.jobs}
+          busy={busy}
+          onLoadMore={() => void loadMore("jobs")}
           renderJob={(job) => (
             <li key={job.id}>
               <button
@@ -350,6 +396,8 @@ function Fleet() {
       {tab === "nodes" && inventory && (
         <NodesPanel
           inventory={inventory.nodes}
+          busy={busy}
+          onLoadMore={() => void loadMore("nodes")}
           renderNode={(node) => (
             <li key={node.id}>
               <span className="mono">{node.name ?? node.id}</span>
