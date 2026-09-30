@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { CloudFleetDirectory, type FleetDirectory } from "./cloud/directory.js";
+import { signPlan, verifyPlan, type SignedPlan } from "./mcp/confirm.js";
 import {
   CloudApiError,
   exchangeApiKey,
@@ -209,6 +211,32 @@ export class Account {
       },
       this.props.accountId,
       known?.endpoint,
+    );
+  }
+
+  /** Signs a change preview for this account; see mcp/confirm.ts. */
+  signPlan(plan: SignedPlan): Promise<string> {
+    return signPlan(this.deps.encryptionKey, this.props.accountId, plan);
+  }
+
+  verifyPlan(token: string, plan: SignedPlan): Promise<void> {
+    return verifyPlan(
+      this.deps.encryptionKey,
+      this.props.accountId,
+      token,
+      plan,
+    );
+  }
+
+  /**
+   * Every workspace this person can reach, from Expanso Cloud, read with the
+   * active workspace's token.
+   */
+  directory(): FleetDirectory {
+    return new CloudFleetDirectory(
+      this.deps.cloudUrl,
+      async () => (await this.session()).accessToken,
+      this.deps.fetch,
     );
   }
 

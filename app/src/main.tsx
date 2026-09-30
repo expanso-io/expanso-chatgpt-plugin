@@ -1,31 +1,25 @@
 import {
-  App,
   applyDocumentTheme,
   applyHostStyleVariables,
+  type App,
 } from "@modelcontextprotocol/ext-apps";
-import { OpenAIExtensions } from "@openai/mcp-extensions/app";
 import "@openai/mcp-extensions/app/styles.css";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { z } from "zod";
 import {
   ConnectionStateSchema,
   FleetSummarySchema,
   InventoryPageSchema,
-  JobDetailSchema,
   WorkspaceInventorySchema,
   type ConnectionStateView,
   type FleetSummary,
-  type JobDetail,
   type WorkspaceInventory,
 } from "../../src/mcp/contracts.js";
 import { mergeInventory } from "../../src/mcp/groups.js";
 import { JobsPanel, NodesPanel } from "./inventory.js";
+import { ago, app, callTool, ConnectionNeeded, State } from "./shared.js";
+import { DashboardPanel, FleetsPanel, JobView, NodeView } from "./views.js";
 import "./fleet.css";
-
-const app = new App({ name: "expanso-fleet", version: "0.1.0" });
-
-const openai = new OpenAIExtensions(app);
 
 let setSummaryFromHost: ((summary: FleetSummary) => void) | undefined;
 
@@ -56,14 +50,6 @@ app.ontoolresult = (result) => {
   else pendingSummary = parsed.data;
 };
 
-/** The workspace cannot be read until it is connected or reconnected. */
-class ConnectionNeeded extends Error {
-  constructor(readonly connection: ConnectionStateView["connection"]) {
-    super(connection.message);
-    this.name = "ConnectionNeeded";
-  }
-}
-
 function applyHostContext(context: ReturnType<App["getHostContext"]>): void {
   if (context?.theme != null) applyDocumentTheme(context.theme);
 
@@ -74,77 +60,7 @@ function applyHostContext(context: ReturnType<App["getHostContext"]>): void {
 
 app.addEventListener("hostcontextchanged", applyHostContext);
 
-async function callTool<Schema extends z.ZodType>(
-  name: string,
-  args: Record<string, string>,
-  schema: Schema,
-): Promise<z.output<Schema>> {
-  const response = await app.callServerTool({ name, arguments: args });
-
-  if (response.isError) {
-    const text = response.content.find((item) => item.type === "text");
-    throw new Error(text && "text" in text ? text.text : "The request failed.");
-  }
-
-  const connection = ConnectionStateSchema.safeParse(
-    response.structuredContent,
-  );
-
-  if (connection.success) {
-    throw new ConnectionNeeded(connection.data.connection);
-  }
-
-  const parsed = schema.safeParse(response.structuredContent);
-
-  if (!parsed.success) throw new Error("The response was not understood.");
-
-  return parsed.data;
-}
-
-async function ask(text: string): Promise<void> {
-  const content = [{ type: "text" as const, text }];
-
-  if (openai.message) await openai.message.send({ role: "user", content });
-  else await app.sendMessage({ role: "user", content });
-}
-
-const STATE_TONE = new Map([
-  ["running", "good"],
-  ["completed", "good"],
-  ["connected", "good"],
-  ["degraded", "warn"],
-  ["queued", "warn"],
-  ["deploying", "warn"],
-  ["rollout_paused", "warn"],
-  ["connecting", "warn"],
-  ["failed", "bad"],
-  ["rollout_failed", "bad"],
-  ["lost", "bad"],
-  ["disconnected", "bad"],
-]);
-
-function State({ value }: { value: string }) {
-  return (
-    <span className={`state state-${STATE_TONE.get(value) ?? "none"}`}>
-      {value.replace(/_/g, " ")}
-    </span>
-  );
-}
-
-function ago(iso?: string): string {
-  if (!iso) return "";
-  const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-
-  if (!Number.isFinite(seconds)) return "";
-
-  if (seconds < 90) return "just now";
-
-  if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
-
-  if (seconds < 129600) return `${Math.round(seconds / 3600)} h ago`;
-
-  return `${Math.round(seconds / 86400)} d ago`;
-}
+type Tab = "attention" | "dashboard" | "jobs" | "nodes" | "fleets";
 
 /** One clear action when the workspace needs connecting or reconnecting. */
 function Reconnect({
@@ -212,10 +128,11 @@ function Fleet() {
     ConnectionStateView["connection"] | undefined
   >(pendingConnection);
 
-  const [detail, setDetail] = useState<JobDetail>();
+  const [openJob, setOpenJob] = useState<string>();
+  const [openNode, setOpenNode] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<"attention" | "jobs" | "nodes">("attention");
+  const [tab, setTab] = useState<Tab>("attention");
   const [inventory, setInventory] = useState<WorkspaceInventory>();
   const [inventoryError, setInventoryError] = useState<string>();
   const [inventoryLoads, setInventoryLoads] = useState(0);
@@ -320,11 +237,6 @@ function Fleet() {
       });
     });
 
-  const openJob = (jobId: string) =>
-    run(async () =>
-      setDetail(await callTool("get_job", { jobId }, JobDetailSchema)),
-    );
-
   if (connection) return <Reconnect connection={connection} />;
 
   if (!summary) {
@@ -338,65 +250,33 @@ function Fleet() {
     );
   }
 
-  if (detail) {
-    const name = detail.job.name ?? detail.job.id;
-
+  if (openJob) {
     return (
-      <main className="fleet">
-        <header className="bar">
-          <button
-            type="button"
-            className="btn btn-secondary cursor-interaction"
-            onClick={() => setDetail(undefined)}
-          >
-            Fleet
-          </button>
-          <h1 className="title">{name}</h1>
-          <State value={detail.job.state} />
-        </header>
-        {detail.job.message && <p className="lede">{detail.job.message}</p>}
-        <button
-          type="button"
-          className="btn btn-primary cursor-interaction"
-          onClick={() =>
-            void ask(
-              `Why is the Expanso job ${name} (${detail.job.id}) ${detail.job.state}? Check its executions, history, and recent logs.`,
-            )
-          }
-        >
-          Ask why it is {detail.job.state.replace(/_/g, " ")}
-        </button>
-        <section>
-          <h2>Executions</h2>
-          {detail.executions.length === 0 && (
-            <p className="empty">No executions.</p>
-          )}
-          <ul className="rows">
-            {detail.executions.map((execution) => (
-              <li key={execution.id}>
-                <span className="mono">
-                  {execution.nodeId ?? "unknown node"}
-                </span>
-                <State value={execution.state} />
-                {execution.message && (
-                  <span className="note">{execution.message}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-        <section>
-          <h2>History</h2>
-          <ul className="rows">
-            {detail.history.slice(0, 12).map((event, index) => (
-              <li key={`${event.timestamp}-${index}`}>
-                <span className="when">{ago(event.timestamp)}</span>
-                <span className="note">{event.message}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </main>
+      <JobView
+        workspaceId={summary.workspace.id}
+        jobId={openJob}
+        onBack={() => {
+          setOpenJob(undefined);
+          void refresh();
+        }}
+      />
+    );
+  }
+
+  if (openNode) {
+    return (
+      <NodeView
+        workspaceId={summary.workspace.id}
+        nodeId={openNode}
+        onBack={() => {
+          setOpenNode(undefined);
+          void refresh();
+        }}
+        onOpenJob={(jobId) => {
+          setOpenNode(undefined);
+          setOpenJob(jobId);
+        }}
+      />
     );
   }
 
@@ -450,8 +330,10 @@ function Fleet() {
         {(
           [
             ["attention", "Needs attention"],
+            ["dashboard", "Dashboard"],
             ["jobs", `Jobs${inventory ? ` ${inventory.jobs.total}` : ""}`],
             ["nodes", `Nodes${inventory ? ` ${inventory.nodes.total}` : ""}`],
+            ["fleets", "Fleets"],
           ] as const
         ).map(([key, text]) => (
           <button
@@ -467,13 +349,23 @@ function Fleet() {
         ))}
       </nav>
 
-      {tab !== "attention" && inventoryError && (
+      {tab === "dashboard" && (
+        <DashboardPanel
+          workspaceId={summary.workspace.id}
+          onOpenJob={setOpenJob}
+          onOpenNode={setOpenNode}
+        />
+      )}
+
+      {tab === "fleets" && <FleetsPanel onSwitched={() => void refresh()} />}
+
+      {(tab === "jobs" || tab === "nodes") && inventoryError && (
         <p className="error" role="alert">
           {inventoryError}
         </p>
       )}
 
-      {tab !== "attention" && !inventory && !inventoryError && (
+      {(tab === "jobs" || tab === "nodes") && !inventory && !inventoryError && (
         <div aria-busy="true">
           <div className="skeleton skeleton-row" />
           <div className="skeleton skeleton-row" />
@@ -491,7 +383,7 @@ function Fleet() {
               <button
                 type="button"
                 className="link cursor-interaction"
-                onClick={() => void openJob(job.id)}
+                onClick={() => setOpenJob(job.id)}
               >
                 {job.name ?? job.id}
               </button>
@@ -510,7 +402,13 @@ function Fleet() {
           onLoadMore={() => void loadMore("nodes")}
           renderNode={(node) => (
             <li key={node.id}>
-              <span className="mono">{node.name ?? node.id}</span>
+              <button
+                type="button"
+                className="link cursor-interaction"
+                onClick={() => setOpenNode(node.id)}
+              >
+                {node.name ?? node.id}
+              </button>
               <State value={node.connectionState} />
               <span className="when">
                 {node.lastHeartbeat ? `seen ${ago(node.lastHeartbeat)}` : ""}
@@ -532,7 +430,7 @@ function Fleet() {
                   <button
                     type="button"
                     className="link cursor-interaction"
-                    onClick={() => void openJob(job.id)}
+                    onClick={() => setOpenJob(job.id)}
                   >
                     {job.name ?? job.id}
                   </button>
@@ -553,7 +451,7 @@ function Fleet() {
                     <button
                       type="button"
                       className="link cursor-interaction"
-                      onClick={() => void openJob(execution.jobId!)}
+                      onClick={() => setOpenJob(execution.jobId!)}
                     >
                       {execution.jobId}
                     </button>
@@ -591,7 +489,7 @@ function Fleet() {
         </>
       )}
       <footer className="foot">
-        Read-only view. Updated {ago(summary.generatedAt)}.
+        Updated {ago(summary.generatedAt)}. Changes ask you to confirm first.
       </footer>
     </main>
   );

@@ -29,8 +29,8 @@ export const DEFAULT_ENDPOINT_SUFFIXES = [".expanso.io"];
 export const DEFAULT_CONSOLE_URL = "https://cloud.expanso.io";
 
 export const SCOPES = {
-  fleetRead: "fleet:read",
-  logsRead: "logs:read",
+  fleet: "fleet",
+  logs: "logs",
 } as const;
 
 export interface ServiceConfig {

@@ -294,7 +294,7 @@ describe("linking page", () => {
     redirectUri: "https://chatgpt.com/cb",
     redirectHost: "chatgpt.com",
     redirectIsLoopback: false,
-    scope: ["fleet:read"],
+    scope: ["fleet"],
   };
 
   it("offers a Get my key button that opens Expanso Cloud in a new tab", () => {
@@ -307,7 +307,9 @@ describe("linking page", () => {
     );
 
     expect(html).toContain("No expiry");
-    expect(html).toContain("full access to their workspace");
+    expect(html).toContain("full access to its workspace");
+    expect(html).toContain("asks you to confirm every change");
+    expect(html.toLowerCase()).not.toContain("read-only");
   });
 
   it("asks for one workspace endpoint in a single-line field", () => {
@@ -343,7 +345,7 @@ describe("linking page", () => {
         redirectUri: "https://evil.example/cb",
         redirectHost: 'evil.example"><img src=x>',
         redirectIsLoopback: false,
-        scope: ["fleet:read", '"><b>'],
+        scope: ["fleet", '"><b>'],
       },
       'h"andle',
     );
@@ -368,7 +370,7 @@ const ToolListSchema = z.object({
       z.object({
         name: z.string(),
         annotations: z
-          .object({ readOnlyHint: z.boolean() })
+          .object({ readOnlyHint: z.boolean(), destructiveHint: z.boolean() })
           .partial()
           .optional(),
       }),
@@ -463,7 +465,7 @@ describe("OAuth front door", () => {
       response_type: "code",
       client_id: clientId,
       redirect_uri: REDIRECT,
-      scope: "fleet:read logs:read",
+      scope: "fleet logs",
       state: "state-123",
       code_challenge: challenge,
       code_challenge_method: "S256",
@@ -494,8 +496,8 @@ describe("OAuth front door", () => {
 
     const body = new URLSearchParams({ handle, ...form });
 
-    body.append("scope", "fleet:read");
-    body.append("scope", "logs:read");
+    body.append("scope", "fleet");
+    body.append("scope", "logs");
 
     return call(`/authorize?${query}`, {
       method: "POST",
@@ -592,7 +594,7 @@ describe("OAuth front door", () => {
     expect(html).not.toContain(API_KEY);
   });
 
-  it("links the key, issues a token for the PKCE verifier only, and serves read-only tools", async () => {
+  it("links the key, issues a token for the PKCE verifier only, and serves fleet tools", async () => {
     const clientId = await register();
     const { verifier, challenge } = await pkce();
 
@@ -645,7 +647,7 @@ describe("OAuth front door", () => {
 
     const tokens = TokenSchema.parse(await issued.json());
 
-    expect(tokens.scope.split(" ").sort()).toEqual(["fleet:read", "logs:read"]);
+    expect(tokens.scope.split(" ").sort()).toEqual(["fleet", "logs"]);
 
     const rpc = (
       id: number,
@@ -677,44 +679,78 @@ describe("OAuth front door", () => {
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [
+        "delete_job",
+        "delete_node",
+        "deploy_job",
+        "fleet.dashboard",
         "fleet.inventory",
         "fleet.open",
         "fleet.summary",
+        "fleet_dashboard",
         "fleet_overview",
+        "fleets.list",
         "get_execution",
         "get_job",
         "get_job_logs",
+        "get_job_spec",
         "get_node",
         "get_profile",
+        "job_dashboard",
         "list_executions",
         "list_jobs",
         "list_nodes",
         "list_workspaces",
+        "node_dashboard",
+        "pause_rollout",
+        "preview_change",
         "recent_errors",
+        "rerun_job",
+        "resume_rollout",
+        "rollback_job",
         "search_mentions",
         "settings.read",
         "settings.update",
+        "stop_job",
         "switch_workspace",
         "add_workspace",
         "disconnect_workspace",
       ].sort(),
     );
 
-    // Nothing touches Expanso except to read it. These tools change only this
-    // plugin's own record of which workspaces are connected; settings.update
-    // comes from the settings helper, which sets no annotations.
+    // Every tool that changes Expanso says so, so ChatGPT asks the user to
+    // confirm; the destructive ones say that too. The workspace tools change
+    // only this plugin's own record of which workspaces are connected;
+    // settings.update comes from the settings helper, which sets no
+    // annotations. Everything else only reads.
     const pluginStateTools = new Set([
       "switch_workspace",
       "add_workspace",
       "disconnect_workspace",
     ]);
 
+    const writes = new Map([
+      ["deploy_job", true],
+      ["stop_job", true],
+      ["rerun_job", false],
+      ["delete_job", true],
+      ["rollback_job", true],
+      ["pause_rollout", false],
+      ["resume_rollout", false],
+      ["delete_node", true],
+    ]);
+
     for (const tool of tools) {
       if (tool.name === "settings.update") continue;
 
+      const destructive = writes.get(tool.name);
+
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(
-        !pluginStateTools.has(tool.name),
+        destructive === undefined && !pluginStateTools.has(tool.name),
       );
+
+      if (destructive !== undefined) {
+        expect(tool.annotations?.destructiveHint, tool.name).toBe(destructive);
+      }
     }
 
     const overview = await (
