@@ -27,6 +27,7 @@ import {
   fakeFetch,
   serve,
   serveToken,
+  type RecordedRequest,
 } from "./helpers.js";
 
 const BASE = "https://fleet.test";
@@ -53,7 +54,11 @@ function cloudRoutes(claims = "claims-org-wide.json") {
     [`POST ${CLOUD}/api/v1/auth/token`]: serveToken(claims),
     [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
     [`GET ${API}/nodes`]: serve("nodes.json"),
-    [`GET ${API}/jobs`]: serve("jobs.json"),
+    // The fixture advertises a second page; that page is empty.
+    [`GET ${API}/jobs`]: (request: RecordedRequest) =>
+      request.url.searchParams.get("next_token")
+        ? Response.json({ items: [] })
+        : serve("jobs.json")(request),
     [`GET ${API}/executions`]: serve("executions-errors.json"),
   };
 }
@@ -614,8 +619,10 @@ describe("OAuth front door", () => {
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [
+        "fleet.inventory",
         "fleet.open",
         "fleet.summary",
+        "fleet_overview",
         "get_execution",
         "get_job",
         "get_job_logs",
@@ -638,6 +645,18 @@ describe("OAuth front door", () => {
 
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
     }
+
+    const overview = await (
+      await rpc(4, "tools/call", { name: "fleet_overview", arguments: {} })
+    ).text();
+
+    // Counts come first, taken from every listed job and node.
+    expect(overview).toContain(
+      "Nodes: 2 total, 1 healthy (connected), 1 not healthy.",
+    );
+    expect(overview).toContain(
+      "Jobs: 3 total, 1 healthy (running or completed), 2 not healthy.",
+    );
 
     const fleetText = await (
       await rpc(3, "tools/call", { name: "fleet.open", arguments: {} })

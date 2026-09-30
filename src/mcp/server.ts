@@ -15,6 +15,12 @@ import {
 } from "../cloud/logs.js";
 import type { ExecutionState } from "../cloud/types.js";
 import { describeFleet, fleetSummary, listFiltered } from "./fleet.js";
+import type { WorkspaceInventory } from "./contracts.js";
+import {
+  describeInventory,
+  trimGroups,
+  workspaceInventory,
+} from "./inventory.js";
 import { searchMentions } from "./mentions.js";
 import {
   ERROR_EXECUTION_STATES,
@@ -101,7 +107,7 @@ export function buildServer(options: ServerOptions): McpServer {
 
   const server = new McpServer({
     name: "expanso-fleet",
-    title: "Expanso Fleet",
+    title: "Expanso",
     version: SERVER_VERSION,
     icons: [icon],
   });
@@ -176,6 +182,73 @@ export function buildServer(options: ServerOptions): McpServer {
   );
 
   server.registerTool(
+    "fleet_overview",
+    {
+      title: "Fleet overview",
+      description:
+        "Answer questions like 'what jobs do I have?', 'which nodes are healthy and which are not?', or 'what is failing?'. Returns counts first (healthy vs not healthy) for every job and node in the workspace, then the items grouped by state, problems first. Nodes are healthy when connected; jobs are healthy when running or completed. Use get_job or recent_errors to explain a specific failure.",
+      inputSchema: z.object({
+        workspaceId: workspaceArg,
+        include: z
+          .enum(["both", "jobs", "nodes"])
+          .optional()
+          .describe("Which inventory to return. Default both."),
+        perGroup: limitArg(200, 25).describe(
+          "Items listed per state group; counts always cover everything. Default 25, max 200.",
+        ),
+      }),
+      annotations: readOnly,
+    },
+    async ({ workspaceId, include, perGroup }) => {
+      const workspace = await account.workspace(workspaceId);
+      const client = await account.client(workspace.workspaceId);
+      const inventory = await workspaceInventory(client, workspace.workspaceId);
+      const scope = include ?? "both";
+      const limit = perGroup ?? 25;
+
+      const trimmed = {
+        ...inventory,
+        jobs: {
+          ...inventory.jobs,
+          groups: trimGroups(inventory.jobs.groups, limit),
+        },
+        nodes: {
+          ...inventory.nodes,
+          groups: trimGroups(inventory.nodes.groups, limit),
+        },
+      };
+
+      const structured: Partial<WorkspaceInventory> = {
+        workspaceId: trimmed.workspaceId,
+        generatedAt: trimmed.generatedAt,
+      };
+
+      if (scope !== "nodes") structured.jobs = trimmed.jobs;
+
+      if (scope !== "jobs") structured.nodes = trimmed.nodes;
+
+      return result(structured, describeInventory(trimmed, scope));
+    },
+  );
+
+  server.registerTool(
+    "fleet.inventory",
+    {
+      title: "Load every job and node",
+      inputSchema: z.object({ workspaceId: workspaceArg }),
+      annotations: readOnly,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    async ({ workspaceId }) => {
+      const workspace = await account.workspace(workspaceId);
+      const client = await account.client(workspace.workspaceId);
+      const inventory = await workspaceInventory(client, workspace.workspaceId);
+
+      return result({ ...inventory }, describeInventory(inventory, "both"));
+    },
+  );
+
+  server.registerTool(
     "list_nodes",
     {
       title: "List nodes",
@@ -194,6 +267,7 @@ export function buildServer(options: ServerOptions): McpServer {
     },
     async ({ workspaceId, prefix, onlyOffline, limit }) => {
       const client = await account.client(workspaceId);
+
       const list = await listFiltered(
         (page) => client.listNodes({ prefix, ...page }),
         nodeView,
@@ -254,6 +328,7 @@ export function buildServer(options: ServerOptions): McpServer {
     },
     async ({ workspaceId, prefix, state, limit }) => {
       const client = await account.client(workspaceId);
+
       // "degraded" is not a server-side filter, so state is applied here.
       const list = await listFiltered(
         (page) => client.listJobs({ prefix, ...page }),

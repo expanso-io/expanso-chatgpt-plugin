@@ -152,9 +152,12 @@ export async function listFiltered<Item, View>(
     nextToken = items.length > 0 ? page.next_token || undefined : undefined;
   } while (nextToken && found.length < limit && scanned < FILTER_SCAN_LIMIT);
 
-  return {
+  const list: FilteredList<View> = {
     items: found.slice(0, limit),
     more: Boolean(nextToken) || found.length > limit,
-    ...(nextToken && found.length < limit ? { partialScan: scanned } : {}),
   };
+
+  if (nextToken && found.length < limit) list.partialScan = scanned;
+
+  return list;
 }

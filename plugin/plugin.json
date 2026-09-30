@@ -15,16 +15,18 @@
     "com.openai": {
       "onboardingSkill": "./skills/onboarding/SKILL.md",
       "interface": {
-        "displayName": "Expanso Fleet",
-        "shortDescription": "Expanso nodes, jobs, and pipeline health",
+        "displayName": "Expanso",
+        "shortDescription": "Your Expanso jobs, nodes, and pipeline health",
         "longDescription": "Open a Fleet view of your Expanso workspace, mention jobs and nodes with @, and ask why a job is degraded. The plugin reads node connectivity, job and execution state, state history, and a bounded snapshot of recent job logs. It cannot deploy, stop, or change anything.",
         "developerName": "Expanso",
         "category": "Developer Tools",
         "capabilities": ["Interactive", "Read"],
         "websiteURL": "https://expanso.io",
         "defaultPrompt": [
-          "Open Expanso Fleet.",
-          "Which Expanso jobs need attention right now?"
+          "What jobs do I have on the network?",
+          "Which nodes are healthy and which are not?",
+          "What is failing right now, and why?",
+          "Open the Fleet view."
         ],
         "brandColor": "#6823CD",
         "composerIcon": "./assets/icon.svg",

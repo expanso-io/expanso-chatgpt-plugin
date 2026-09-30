@@ -93,3 +93,38 @@ export type HistoryView = z.infer<typeof HistoryViewSchema>;
 export type FleetSummary = z.infer<typeof FleetSummarySchema>;
 
 export type JobDetail = z.infer<typeof JobDetailSchema>;
+
+const groupOf = <Item extends z.ZodType>(item: Item) =>
+  z.object({
+    state: z.string(),
+    healthy: z.boolean(),
+    /** Every item in this state, even when `items` is trimmed. */
+    count: z.number(),
+    items: z.array(item),
+  });
+
+const inventoryOf = <Item extends z.ZodType>(item: Item) =>
+  z.object({
+    total: z.number(),
+    healthy: z.number(),
+    notHealthy: z.number(),
+    /** True when the workspace has more rows than were read. */
+    truncated: z.boolean(),
+    groups: z.array(groupOf(item)),
+  });
+
+export const WorkspaceInventorySchema = z.object({
+  workspaceId: z.string(),
+  generatedAt: z.string(),
+  jobs: inventoryOf(JobViewSchema),
+  nodes: inventoryOf(NodeViewSchema),
+});
+
+export interface InventoryGroup<View> {
+  state: string;
+  healthy: boolean;
+  count: number;
+  items: View[];
+}
+
+export type WorkspaceInventory = z.infer<typeof WorkspaceInventorySchema>;

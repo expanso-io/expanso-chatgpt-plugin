@@ -220,13 +220,17 @@ describe("WorkspaceClient fetch binding", () => {
       [`GET ${API}/nodes/stats`]: serve("node-stats.json"),
     });
 
-    return function (this: unknown, ...args: Parameters<typeof inner>) {
+    return function (
+      this: typeof globalThis | undefined,
+      input: string,
+      init?: RequestInit,
+    ): Promise<Response> {
       if (this !== undefined && this !== globalThis) {
         throw new TypeError("Illegal invocation");
       }
 
-      return inner(...args);
-    } as typeof inner;
+      return inner(input, init);
+    };
   }
 
   it("calls an injected global-style fetch unbound", async () => {

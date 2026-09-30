@@ -9,7 +9,8 @@ adds:
 
 - **A Fleet view in the ChatGPT sidebar.** Nodes online, jobs by state, jobs
   that need attention, recent failed or degraded executions, and offline
-  nodes for your default workspace.
+  nodes for your default workspace, plus every job and every node grouped by
+  health with filters and search.
 - **`@job` and `@node` mentions.** Type `@` in the composer to pick a job or
   node, then ask "why is this degraded?".
 - **Read-only tools** for nodes, jobs, executions with their state history,
@@ -96,7 +97,10 @@ This builds the plugin into `dist/plugin/expanso-fleet`, copies it to
    the page, then choose **Connect**. If something is wrong, the page says
    which value failed and why.
 4. Onboarding confirms your default workspace and opens the Fleet view.
-5. In a chat, type `@` and pick a job, then ask why it is degraded.
+5. Ask in plain words, or type `@Expanso` to aim a question at the plugin:
+   "What jobs do I have on the network?", "Which nodes are healthy and which
+   are not?", "What is failing right now, and why?". Type `@` and pick a job
+   or node to ask about that one item.
 
 **ChatGPT on the web, as a connector.** Turn on Developer mode (Settings,
 Security and login), open <https://chatgpt.com/plugins>, choose the plus
@@ -108,6 +112,7 @@ work the same way; the onboarding skill is only in the plugin package.
 | Tool              | What it returns                                                         |
 | ----------------- | ----------------------------------------------------------------------- |
 | `fleet.open`      | The Fleet view (sidebar entry point).                                   |
+| `fleet_overview`  | Every job and node: counts first (healthy vs not), then items by state. |
 | `list_nodes`      | Nodes with connectivity, labels, and resource usage.                    |
 | `get_node`        | One node and the executions placed on it.                               |
 | `list_jobs`       | Jobs with state; `degraded` is filtered locally.                        |

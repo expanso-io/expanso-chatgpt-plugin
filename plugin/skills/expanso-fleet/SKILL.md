@@ -10,8 +10,14 @@ nothing here can deploy, stop, rerun, or change a job or node. If the user
 asks for a change, say it is not available in this plugin yet and describe
 what they would do in Expanso Cloud.
 
-- Overview: `fleet.open` shows the Fleet view. `list_nodes`, `list_jobs`, and
-  `recent_errors` answer questions without the view.
+- Questions about what exists or what is healthy ("what jobs do I have?",
+  "which nodes are healthy vs not?", "what is failing?"): call
+  `fleet_overview`. Answer with the counts first (total, healthy, not
+  healthy), then list the items that are not healthy by name, grouped by
+  state. Offer the full list or the Fleet view when there are many.
+- `fleet.open` shows the Fleet view, where every job and node can be browsed
+  and filtered. `list_nodes`, `list_jobs`, and `recent_errors` answer
+  narrower questions.
 - A mentioned job (`expanso://workspaces/<workspace>/jobs/<id>`): call
   `get_job` first. For "why is it degraded or failing", read the failing
   executions with `get_execution` (its history carries the failure messages),

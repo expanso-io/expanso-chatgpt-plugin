@@ -11,9 +11,12 @@ import type { z } from "zod";
 import {
   FleetSummarySchema,
   JobDetailSchema,
+  WorkspaceInventorySchema,
   type FleetSummary,
   type JobDetail,
+  type WorkspaceInventory,
 } from "../../src/mcp/contracts.js";
+import { JobsPanel, NodesPanel } from "./inventory.js";
 import "./fleet.css";
 
 const app = new App({ name: "expanso-fleet", version: "0.1.0" });
@@ -116,6 +119,30 @@ function Fleet() {
   const [detail, setDetail] = useState<JobDetail>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [tab, setTab] = useState<"attention" | "jobs" | "nodes">("attention");
+  const [inventory, setInventory] = useState<WorkspaceInventory>();
+  const [inventoryError, setInventoryError] = useState<string>();
+
+  const loadInventory = async () => {
+    setInventoryError(undefined);
+
+    try {
+      setInventory(
+        await callTool("fleet.inventory", {}, WorkspaceInventorySchema),
+      );
+    } catch (caught) {
+      setInventoryError(
+        caught instanceof Error ? caught.message : "Could not load the list.",
+      );
+    }
+  };
+
+  const summaryLoaded = summary !== undefined;
+
+  // The whole inventory loads after the first paint, from the app only.
+  useEffect(() => {
+    if (summaryLoaded) void loadInventory();
+  }, [summaryLoaded]);
 
   useEffect(() => {
     setSummaryFromHost = setSummary;
@@ -141,9 +168,10 @@ function Fleet() {
   };
 
   const refresh = () =>
-    run(async () =>
-      setSummary(await callTool("fleet.summary", {}, FleetSummarySchema)),
-    );
+    run(async () => {
+      setSummary(await callTool("fleet.summary", {}, FleetSummarySchema));
+      await loadInventory();
+    });
 
   const openJob = (jobId: string) =>
     run(async () =>
@@ -264,11 +292,45 @@ function Fleet() {
         </div>
       </dl>
 
-      <section>
-        <h2>Jobs needing attention</h2>
-        {attention === 0 && <p className="empty">Every job is healthy.</p>}
-        <ul className="rows">
-          {jobs.needsAttention.map((job) => (
+      <nav className="tabs" role="tablist" aria-label="Fleet sections">
+        {(
+          [
+            ["attention", "Needs attention"],
+            ["jobs", `Jobs${inventory ? ` ${inventory.jobs.total}` : ""}`],
+            ["nodes", `Nodes${inventory ? ` ${inventory.nodes.total}` : ""}`],
+          ] as const
+        ).map(([key, text]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab cursor-interaction${tab === key ? " tab-on" : ""}`}
+            onClick={() => setTab(key)}
+          >
+            {text}
+          </button>
+        ))}
+      </nav>
+
+      {tab !== "attention" && inventoryError && (
+        <p className="error" role="alert">
+          {inventoryError}
+        </p>
+      )}
+
+      {tab !== "attention" && !inventory && !inventoryError && (
+        <div aria-busy="true">
+          <div className="skeleton skeleton-row" />
+          <div className="skeleton skeleton-row" />
+          <div className="skeleton skeleton-row" />
+        </div>
+      )}
+
+      {tab === "jobs" && inventory && (
+        <JobsPanel
+          inventory={inventory.jobs}
+          renderJob={(job) => (
             <li key={job.id}>
               <button
                 type="button"
@@ -278,54 +340,97 @@ function Fleet() {
                 {job.name ?? job.id}
               </button>
               <State value={job.state} />
+              <span className="when">{ago(job.updatedAt)}</span>
               {job.message && <span className="note">{job.message}</span>}
             </li>
-          ))}
-        </ul>
-      </section>
+          )}
+        />
+      )}
 
-      <section>
-        <h2>Recent failed or degraded executions</h2>
-        {recentErrors.length === 0 && <p className="empty">None.</p>}
-        <ul className="rows">
-          {recentErrors.map((execution) => (
-            <li key={execution.id}>
-              {execution.jobId ? (
-                <button
-                  type="button"
-                  className="link cursor-interaction"
-                  onClick={() => void openJob(execution.jobId!)}
-                >
-                  {execution.jobId}
-                </button>
-              ) : (
-                <span className="mono">{execution.id}</span>
-              )}
-              <State value={execution.state} />
-              <span className="when">{ago(execution.updatedAt)}</span>
-              {execution.message && (
-                <span className="note">{execution.message}</span>
-              )}
+      {tab === "nodes" && inventory && (
+        <NodesPanel
+          inventory={inventory.nodes}
+          renderNode={(node) => (
+            <li key={node.id}>
+              <span className="mono">{node.name ?? node.id}</span>
+              <State value={node.connectionState} />
+              <span className="when">
+                {node.lastHeartbeat ? `seen ${ago(node.lastHeartbeat)}` : ""}
+              </span>
+              {node.message && <span className="note">{node.message}</span>}
             </li>
-          ))}
-        </ul>
-      </section>
+          )}
+        />
+      )}
 
-      {nodes.offline.length > 0 && (
-        <section>
-          <h2>Offline nodes</h2>
-          <ul className="rows">
-            {nodes.offline.map((node) => (
-              <li key={node.id}>
-                <span className="mono">{node.name ?? node.id}</span>
-                <State value={node.connectionState} />
-                <span className="when">
-                  {node.lastHeartbeat ? `seen ${ago(node.lastHeartbeat)}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {tab === "attention" && (
+        <>
+          <section>
+            <h2>Jobs needing attention</h2>
+            {attention === 0 && <p className="empty">Every job is healthy.</p>}
+            <ul className="rows">
+              {jobs.needsAttention.map((job) => (
+                <li key={job.id}>
+                  <button
+                    type="button"
+                    className="link cursor-interaction"
+                    onClick={() => void openJob(job.id)}
+                  >
+                    {job.name ?? job.id}
+                  </button>
+                  <State value={job.state} />
+                  {job.message && <span className="note">{job.message}</span>}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section>
+            <h2>Recent failed or degraded executions</h2>
+            {recentErrors.length === 0 && <p className="empty">None.</p>}
+            <ul className="rows">
+              {recentErrors.map((execution) => (
+                <li key={execution.id}>
+                  {execution.jobId ? (
+                    <button
+                      type="button"
+                      className="link cursor-interaction"
+                      onClick={() => void openJob(execution.jobId!)}
+                    >
+                      {execution.jobId}
+                    </button>
+                  ) : (
+                    <span className="mono">{execution.id}</span>
+                  )}
+                  <State value={execution.state} />
+                  <span className="when">{ago(execution.updatedAt)}</span>
+                  {execution.message && (
+                    <span className="note">{execution.message}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {nodes.offline.length > 0 && (
+            <section>
+              <h2>Offline nodes</h2>
+              <ul className="rows">
+                {nodes.offline.map((node) => (
+                  <li key={node.id}>
+                    <span className="mono">{node.name ?? node.id}</span>
+                    <State value={node.connectionState} />
+                    <span className="when">
+                      {node.lastHeartbeat
+                        ? `seen ${ago(node.lastHeartbeat)}`
+                        : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
       <footer className="foot">
         Read-only view. Updated {ago(summary.generatedAt)}.
