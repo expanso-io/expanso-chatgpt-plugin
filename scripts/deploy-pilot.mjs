@@ -126,7 +126,7 @@ async function writeConfig() {
     main: "dist/worker/worker.js",
     no_bundle: true,
     compatibility_date: "2026-09-01",
-    compatibility_flags: ["nodejs_compat"],
+    compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
     workers_dev: true,
     kv_namespaces: [{ binding: "OAUTH_KV", id: state.kvId }],
     vars: state.url ? { PUBLIC_BASE_URL: state.url } : {},
