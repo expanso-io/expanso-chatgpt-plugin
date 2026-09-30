@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { JsonValue } from "../src/cloud/types.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url).href);
 
@@ -12,6 +13,8 @@ export interface RecordedRequest {
   url: URL;
   method: string;
   headers: Headers;
+  /** The request body as sent, for writes. */
+  body?: string;
 }
 
 export type Route = (request: RecordedRequest) => Response;
@@ -48,6 +51,12 @@ export function fixtureToken(claimsFixture: string): string {
   ].join(".");
 }
 
+/** Serves a JSON body built in the test. */
+export const reply =
+  (body: JsonValue, status = 200): Route =>
+  () =>
+    Response.json(body, { status });
+
 /** Replies with an error status and an orchestrator-style message. */
 export const fail =
   (status: number, message: string): Route =>
@@ -66,6 +75,8 @@ export function fakeFetch(routes: Record<string, Route>) {
       url: new URL(input),
       method: init.method ?? "GET",
       headers: new Headers(init.headers),
+      // The client under test only ever sends JSON text.
+      body: init.body == null ? undefined : String(init.body),
     };
 
     requests.push(request);
