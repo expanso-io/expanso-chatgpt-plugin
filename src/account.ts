@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { open } from "./crypto.js";
+import { CloudFleetDirectory, type FleetDirectory } from "./cloud/directory.js";
+import { signPlan, verifyPlan, type SignedPlan } from "./mcp/confirm.js";
 import {
   exchangeApiKey,
   WorkspaceClient,
@@ -29,6 +31,12 @@ export const GrantPropsSchema = z.object({
     data: z.string(),
   }),
   workspaces: z.array(LinkedWorkspaceSchema).min(1),
+  /**
+   * When the linked key expires, as Expanso Cloud reported it; null for a key
+   * with no expiry. Unset for keys pasted on the sign-in page, whose expiry
+   * the service cannot read.
+   */
+  keyExpiresAt: z.string().nullable().optional(),
 });
 
 export type GrantProps = z.infer<typeof GrantPropsSchema>;
@@ -117,6 +125,29 @@ export class Account {
     return new WorkspaceClient(
       workspace.endpoint,
       token.accessToken,
+      this.deps.fetch,
+    );
+  }
+
+  /** Signs a change preview for this account; see mcp/confirm.ts. */
+  signPlan(plan: SignedPlan): Promise<string> {
+    return signPlan(this.deps.encryptionKey, this.props.accountId, plan);
+  }
+
+  verifyPlan(token: string, plan: SignedPlan): Promise<void> {
+    return verifyPlan(
+      this.deps.encryptionKey,
+      this.props.accountId,
+      token,
+      plan,
+    );
+  }
+
+  /** Every workspace this person can reach, from Expanso Cloud. */
+  directory(): FleetDirectory {
+    return new CloudFleetDirectory(
+      this.deps.cloudUrl,
+      async () => (await this.accessToken()).accessToken,
       this.deps.fetch,
     );
   }

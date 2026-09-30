@@ -14,7 +14,15 @@ import {
   type OpenLogSocket,
 } from "../cloud/logs.js";
 import type { ExecutionState } from "../cloud/types.js";
+import { registerControlTools } from "./control.js";
+import {
+  describeDashboard,
+  jobDashboard,
+  nodeDetail,
+  workspaceDashboard,
+} from "./dashboard.js";
 import { describeFleet, fleetSummary, listFiltered } from "./fleet.js";
+import { describeFleets, fleetsView } from "./fleets.js";
 import type { WorkspaceInventory } from "./contracts.js";
 import {
   describeCounts,
@@ -95,8 +103,9 @@ function scanNote(scanned: number | undefined, noun: string): string {
 }
 
 /**
- * Builds the MCP server for one request. Every tool here is read-only: this
- * phase registers no tool that changes anything in Expanso.
+ * Builds the MCP server for one request. Tools registered here read; the
+ * tools that change Expanso are in control.ts and each runs only with a
+ * signed preview the user confirmed.
  */
 export function buildServer(options: ServerOptions): McpServer {
   const { account } = options;
@@ -519,9 +528,9 @@ export function buildServer(options: ServerOptions): McpServer {
       annotations: readOnly,
     },
     async ({ workspaceId, jobId, nodeId, lookbackMinutes, maxLines }) => {
-      if (!options.scopes.includes(SCOPES.logsRead)) {
+      if (!options.scopes.includes(SCOPES.logs)) {
         throw new Error(
-          "This connection was not granted log access. Reconnect Expanso Fleet and allow logs:read.",
+          "This connection was not granted log access. Reconnect Expanso Fleet and allow logs.",
         );
       }
 
@@ -555,6 +564,131 @@ export function buildServer(options: ServerOptions): McpServer {
       );
     },
   );
+
+  const dashboard = async ({ workspaceId }: { workspaceId?: string }) => {
+    const workspace = await account.workspace(workspaceId);
+    const client = await account.client(workspace.workspaceId);
+    const view = await workspaceDashboard(client, workspace.workspaceId);
+
+    return result({ ...view }, describeDashboard(view));
+  };
+
+  server.registerTool(
+    "fleet_dashboard",
+    {
+      title: "Fleet dashboard",
+      description:
+        "Fleet health over time: nodes online and CPU for the last 30 minutes, executions placed and finished per hour and failures per hour for the last day, the jobs failing most, and per-node load. Use for 'how is the fleet doing?' or 'what changed today?'.",
+      inputSchema: z.object({ workspaceId: workspaceArg }),
+      annotations: readOnly,
+    },
+    dashboard,
+  );
+
+  server.registerTool(
+    "fleet.dashboard",
+    {
+      title: "Load the Fleet dashboard",
+      inputSchema: z.object({ workspaceId: workspaceArg }),
+      annotations: readOnly,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    dashboard,
+  );
+
+  server.registerTool(
+    "node_dashboard",
+    {
+      title: "Node dashboard",
+      description:
+        "One node in detail: connection, CPU, memory, and disk for the last 30 minutes, and the executions placed on it by state.",
+      inputSchema: z.object({ workspaceId: workspaceArg, nodeId: z.string() }),
+      annotations: readOnly,
+    },
+    async ({ workspaceId, nodeId }) => {
+      const client = await account.client(workspaceId);
+      const view = await nodeDetail(client, nodeId);
+      const last = view.resources.points.at(-1);
+
+      return result(
+        { ...view },
+        `Node ${view.node.name ?? view.node.id} is ${view.node.connectionState}${last?.cpuPercent !== undefined ? `, CPU ${last.cpuPercent}%` : ""}. Executions: ${
+          Object.entries(view.executionsByState)
+            .map(([state, count]) => `${count} ${state}`)
+            .join(", ") || "none"
+        }.`,
+      );
+    },
+  );
+
+  server.registerTool(
+    "job_dashboard",
+    {
+      title: "Job dashboard",
+      description:
+        "One job in detail: its state on every node, failures per hour for the last day, recent history, and its versions (for rollback).",
+      inputSchema: z.object({ workspaceId: workspaceArg, jobId: z.string() }),
+      annotations: readOnly,
+    },
+    async ({ workspaceId, jobId }) => {
+      const client = await account.client(workspaceId);
+      const view = await jobDashboard(client, jobId);
+
+      const failures = view.failures.reduce(
+        (sum, bucket) =>
+          sum + Object.values(bucket.counts).reduce((a, b) => a + b, 0),
+        0,
+      );
+
+      return result(
+        { ...view },
+        `Job ${view.job.name ?? view.job.id} is ${view.job.state} on ${view.nodes.length} nodes (${
+          Object.entries(view.executionsByState)
+            .map(([state, count]) => `${count} ${state}`)
+            .join(", ") || "none"
+        }); ${failures} failed, degraded, or lost executions in the last day; ${view.versions.length} versions.`,
+      );
+    },
+  );
+
+  const fleets = async () => {
+    const settings = await account.settings();
+
+    const view = await fleetsView({
+      directory: account.directory(),
+      linked: account.workspaces,
+      activeWorkspaceId: settings.defaultWorkspaceId,
+      keyExpiresAt: account.props.keyExpiresAt,
+      client: (id) => account.client(id),
+    });
+
+    return result({ ...view }, describeFleets(view));
+  };
+
+  server.registerTool(
+    "list_fleets",
+    {
+      title: "List fleets",
+      description:
+        "Every Expanso workspace (fleet) this connection can see, which are connected and which is active, key expiry, and a status summary for each: nodes healthy and not, jobs running and failing, last activity. To switch the active fleet, call settings.update with defaultWorkspaceId.",
+      inputSchema: z.object({}),
+      annotations: readOnly,
+    },
+    fleets,
+  );
+
+  server.registerTool(
+    "fleets.list",
+    {
+      title: "Load fleets",
+      inputSchema: z.object({}),
+      annotations: readOnly,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    fleets,
+  );
+
+  registerControlTools(server, account);
 
   const profileSchema = z.object({
     id: z.string().min(1).regex(/\S/),

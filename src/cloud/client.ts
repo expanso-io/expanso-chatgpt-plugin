@@ -9,16 +9,35 @@ import {
   JobPageSchema,
   NodeEnvelopeSchema,
   NodePageSchema,
+  NodeDeleteResponseSchema,
   NodeStatsSchema,
+  JobDiffResponseSchema,
+  JobIdResponseSchema,
+  JobVersionDiffSchema,
+  JobSpecEnvelopeSchema,
+  JobVersionPageSchema,
+  JobVersionSpecsSchema,
+  PutJobResponseSchema,
+  QueryRangeSchema,
+  RawJobEnvelopeSchema,
+  RerunResponseSchema,
+  RollbackResponseSchema,
+  ServiceStatusSchema,
   TokenClaimsSchema,
   TokenResponseSchema,
   type Execution,
   type ExecutionState,
   type HistoryEvent,
   type Job,
+  type JobSpec,
+  type JsonFields,
+  type JobVersion,
   type Node,
+  type NodeMetric,
   type NodeStats,
   type Page,
+  type QueryRange,
+  type ServiceStatus,
 } from "./types.js";
 
 export type FetchLike = (
@@ -159,13 +178,17 @@ export interface ListOptions {
   nextToken?: string;
 }
 
-/** Read-only client for one workspace's orchestrator API. */
+/** Client for one workspace's orchestrator API. */
 export class WorkspaceClient {
   constructor(
     readonly endpoint: string,
     private readonly accessToken: string,
     private readonly fetchImpl: FetchLike = fetch,
   ) {}
+
+  status(): Promise<ServiceStatus> {
+    return this.get("/status", ServiceStatusSchema);
+  }
 
   nodeStats(): Promise<NodeStats> {
     // The orchestrator serves stats at /nodes/-/stats; /nodes/stats is read as
@@ -174,7 +197,7 @@ export class WorkspaceClient {
   }
 
   listNodes(
-    options: ListOptions & { prefix?: string; labels?: string } = {},
+    options: ListOptions & { prefix?: string; labels?: string[] } = {},
   ): Promise<Page<Node>> {
     return this.get("/nodes", NodePageSchema, {
       prefix: options.prefix,
@@ -187,12 +210,17 @@ export class WorkspaceClient {
   }
 
   async getNode(id: string): Promise<Node> {
-    const body = await this.get(
-      `/nodes/${encodeURIComponent(assertSafeId(id, "Node ID"))}`,
-      NodeEnvelopeSchema,
-    );
+    const body = await this.get(nodePath(id), NodeEnvelopeSchema);
 
     return body.node ?? {};
+  }
+
+  /** Soft-deletes a node. Connected nodes need force. */
+  deleteNode(
+    id: string,
+    body: { force?: boolean; reason?: string },
+  ): Promise<z.output<typeof NodeDeleteResponseSchema>> {
+    return this.send("DELETE", nodePath(id), NodeDeleteResponseSchema, body);
   }
 
   listJobs(
@@ -208,40 +236,169 @@ export class WorkspaceClient {
   }
 
   async getJob(id: string): Promise<Job> {
-    const body = await this.get(
-      `/jobs/${encodeURIComponent(assertSafeId(id, "Job ID"))}`,
-      JobEnvelopeSchema,
-    );
+    const body = await this.get(jobPath(id), JobEnvelopeSchema);
 
     return body.job ?? {};
   }
 
+  /**
+   * The job with its complete spec, parsed without dropping nulls, so an
+   * edit sends back every field it did not change.
+   */
+  async getJobSpec(
+    id: string,
+  ): Promise<{ id: string; spec: JobSpec; version?: number }> {
+    const text = await this.fetchText("GET", jobPath(id), {});
+    const body = decode(text, RawJobEnvelopeSchema);
+    const spec = decode(text, JobSpecEnvelopeSchema, false).job?.spec;
+
+    if (!spec) {
+      throw new UnexpectedResponseError(
+        "The Expanso workspace returned a job without a spec.",
+      );
+    }
+
+    return {
+      id: body.job?.id ?? id,
+      spec,
+      version: body.job?.status?.version,
+    };
+  }
+
+  /**
+   * Creates the job, or updates the job with the same name. With dryRun the
+   * orchestrator validates everything, then rolls back instead of saving.
+   */
+  putJob(
+    spec: JobSpec,
+    options: { dryRun?: boolean; force?: boolean } = {},
+  ): Promise<PutJobResult> {
+    return this.send("PUT", "/jobs", PutJobResponseSchema, {
+      spec,
+      force: options.force || undefined,
+      dry_run: options.dryRun || undefined,
+    });
+  }
+
+  /** Updates an existing job by ID; the spec may rename it. */
+  putJobById(
+    id: string,
+    spec: JobSpec,
+    options: { dryRun?: boolean; force?: boolean } = {},
+  ): Promise<PutJobResult> {
+    return this.send("PUT", jobPath(id), PutJobResponseSchema, {
+      spec,
+      force: options.force || undefined,
+      dry_run: options.dryRun || undefined,
+    });
+  }
+
+  /** The orchestrator's own diff of a spec against the job of the same name. */
+  diffJob(spec: JobSpec): Promise<{ diff: string; warnings: string[] }> {
+    return this.send("PUT", "/jobs/-/diff", JobDiffResponseSchema, { spec });
+  }
+
+  stopJob(id: string, reason?: string): Promise<{ job_id?: string }> {
+    return this.send("POST", `${jobPath(id)}/stop`, JobIdResponseSchema, {
+      reason,
+    });
+  }
+
+  /** Soft-deletes a job. Without force it must be stopped, completed, or failed. */
+  deleteJob(
+    id: string,
+    body: { force?: boolean; reason?: string },
+  ): Promise<{ job_id?: string }> {
+    return this.send("DELETE", jobPath(id), JobIdResponseSchema, body);
+  }
+
+  /** Restarts every execution with the current spec, as a new rollout. */
+  rerunJob(id: string): Promise<z.output<typeof RerunResponseSchema>> {
+    return this.send("PUT", `${jobPath(id)}/rerun`, RerunResponseSchema, {});
+  }
+
+  rollbackJob(
+    id: string,
+    body: { version?: number; reason?: string; dryRun?: boolean },
+  ): Promise<z.output<typeof RollbackResponseSchema>> {
+    return this.send(
+      "POST",
+      `${jobPath(id)}/rollback`,
+      RollbackResponseSchema,
+      {
+        version: body.version,
+        reason: body.reason,
+        dry_run: body.dryRun || undefined,
+      },
+    );
+  }
+
+  pauseRollout(id: string, reason?: string): Promise<{ job_id?: string }> {
+    return this.send(
+      "POST",
+      `${jobPath(id)}/rollout/pause`,
+      JobIdResponseSchema,
+      { reason },
+    );
+  }
+
+  resumeRollout(id: string, reason?: string): Promise<{ job_id?: string }> {
+    return this.send(
+      "POST",
+      `${jobPath(id)}/rollout/resume`,
+      JobIdResponseSchema,
+      { reason },
+    );
+  }
+
+  /** Versions with their specs, read without dropping nulls. */
+  async jobVersions(id: string): Promise<Page<JobVersion>> {
+    const text = await this.fetchText("GET", `${jobPath(id)}/versions`, {});
+    const page = decode(text, JobVersionPageSchema);
+    const specs = decode(text, JobVersionSpecsSchema, false).items ?? [];
+
+    return {
+      next_token: page.next_token,
+      items: (page.items ?? []).map((item, index) => ({
+        ...item,
+        spec: specs[index]?.spec ?? undefined,
+      })),
+    };
+  }
+
+  jobVersionDiff(
+    id: string,
+    from: number,
+    to?: number,
+  ): Promise<z.output<typeof JobVersionDiffSchema>> {
+    return this.get(`${jobPath(id)}/versions/diff`, JobVersionDiffSchema, {
+      from,
+      to,
+    });
+  }
+
   jobHistory(
     id: string,
-    options: ListOptions = {},
+    options: ListOptions & { since?: string } = {},
   ): Promise<Page<HistoryEvent>> {
-    return this.get(
-      `/jobs/${encodeURIComponent(assertSafeId(id, "Job ID"))}/history`,
-      HistoryPageSchema,
-      { limit: options.limit, next_token: options.nextToken },
-    );
+    return this.get(`${jobPath(id)}/history`, HistoryPageSchema, {
+      since: options.since,
+      limit: options.limit,
+      next_token: options.nextToken,
+    });
   }
 
   jobExecutions(
     id: string,
     options: ListOptions & { states?: ExecutionState[] } = {},
   ): Promise<Page<Execution>> {
-    return this.get(
-      `/jobs/${encodeURIComponent(assertSafeId(id, "Job ID"))}/executions`,
-      ExecutionPageSchema,
-      {
-        states: options.states,
-        limit: options.limit,
-        next_token: options.nextToken,
-        order_by: "updated_at",
-        order: "desc",
-      },
-    );
+    return this.get(`${jobPath(id)}/executions`, ExecutionPageSchema, {
+      states: options.states,
+      limit: options.limit,
+      next_token: options.nextToken,
+      order_by: "updated_at",
+      order: "desc",
+    });
   }
 
   listExecutions(
@@ -282,23 +439,70 @@ export class WorkspaceClient {
     );
   }
 
-  private async get<Schema extends z.ZodType>(
+  /**
+   * Per-node resource samples from node heartbeats. The orchestrator keeps
+   * them in memory for about 30 minutes.
+   */
+  queryRange(
+    metric: NodeMetric,
+    options: { start: number; end: number; step: number },
+  ): Promise<QueryRange> {
+    return this.get("/metrics/query_range", QueryRangeSchema, {
+      query: metric,
+      start: Math.floor(options.start),
+      end: Math.floor(options.end),
+      step: Math.max(1, Math.floor(options.step)),
+    });
+  }
+
+  private get<Schema extends z.ZodType>(
     path: string,
     schema: Schema,
     query: Query = {},
   ): Promise<z.output<Schema>> {
-    const url = `https://${this.endpoint}/api/v1${path}${toQueryString(query)}`;
+    return this.request("GET", path, schema, { query });
+  }
+
+  private send<Schema extends z.ZodType>(
+    method: "PUT" | "POST" | "DELETE",
+    path: string,
+    schema: Schema,
+    body: JsonFields,
+  ): Promise<z.output<Schema>> {
+    return this.request(method, path, schema, { body });
+  }
+
+  private async request<Schema extends z.ZodType>(
+    method: string,
+    path: string,
+    schema: Schema,
+    options: { query?: Query; body?: JsonFields },
+  ): Promise<z.output<Schema>> {
+    return decode(await this.fetchText(method, path, options), schema);
+  }
+
+  private async fetchText(
+    method: string,
+    path: string,
+    options: { query?: Query; body?: JsonFields },
+  ): Promise<string> {
+    const url = `https://${this.endpoint}/api/v1${path}${toQueryString(options.query ?? {})}`;
 
     // Workers' fetch throws "Illegal invocation" when called as a method.
     const fetchImpl = this.fetchImpl;
 
+    const headers = new Headers({
+      Authorization: `Bearer ${this.accessToken}`,
+      Accept: "application/json",
+      "User-Agent": USER_AGENT,
+    });
+
+    if (options.body) headers.set("Content-Type", "application/json");
+
     const response = await fetchImpl(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        Accept: "application/json",
-        "User-Agent": USER_AGENT,
-      },
+      method,
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -306,12 +510,34 @@ export class WorkspaceClient {
       throw await toError(response, "The Expanso workspace request failed");
     }
 
-    return parseBody(
-      response,
-      schema,
+    return response.text();
+  }
+}
+
+function decode<Schema extends z.ZodType>(
+  text: string,
+  schema: Schema,
+  dropNulls = true,
+): z.output<Schema> {
+  const parsed = parseJson(text, schema, dropNulls);
+
+  if (!parsed.success) {
+    throw new UnexpectedResponseError(
       "The Expanso workspace returned an unexpected response.",
     );
   }
+
+  return parsed.data;
+}
+
+export type PutJobResult = z.output<typeof PutJobResponseSchema>;
+
+function jobPath(id: string): string {
+  return `/jobs/${encodeURIComponent(assertSafeId(id, "Job ID"))}`;
+}
+
+function nodePath(id: string): string {
+  return `/nodes/${encodeURIComponent(assertSafeId(id, "Node ID"))}`;
 }
 
 /** Matches the orchestrator's generated client: arrays repeat their key. */
@@ -353,10 +579,13 @@ async function parseBody<Schema extends z.ZodType>(
 export function parseJson<Schema extends z.ZodType>(
   raw: string,
   schema: Schema,
+  dropNulls = true,
 ): z.ZodSafeParseResult<z.output<Schema>> {
   try {
     return schema.safeParse(
-      JSON.parse(raw, (_key, value) => (value === null ? undefined : value)),
+      dropNulls
+        ? JSON.parse(raw, (_key, value) => (value === null ? undefined : value))
+        : JSON.parse(raw),
     );
   } catch {
     return schema.safeParse(undefined);
