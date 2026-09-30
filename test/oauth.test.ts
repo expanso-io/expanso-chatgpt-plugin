@@ -219,7 +219,37 @@ describe("linkAccount errors", () => {
     }).result;
 
     expect(error?.field).toBe("endpoints");
-    expect(error?.message).toMatch(/could not be reached at that endpoint/);
+    expect(error?.message).toMatch(
+      /could not be read at that endpoint \(it answered HTTP 404\)/,
+    );
+  });
+
+  it("says when the workspace answers in a shape it cannot read", async () => {
+    const error = await link(API_KEY, ENDPOINT, {
+      ...cloudRoutes(),
+      [`GET ${API}/nodes/stats`]: () => Response.json({ total_nodes: "many" }),
+    }).result;
+
+    expect(error?.field).toBe("endpoints");
+    expect(error?.message).toMatch(/answered, but not in a form/);
+  });
+
+  it("says when the workspace gives no answer", async () => {
+    const cloud = fakeFetch(cloudRoutes());
+
+    const error = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: (input, init) =>
+        input.includes("/api/v1/nodes/stats")
+          ? Promise.reject(new TypeError("network down"))
+          : cloud.fetch(input, init),
+    }).then(
+      () => undefined,
+      (caught: LinkError) => caught,
+    );
+
+    expect(error?.message).toMatch(/there was no answer/);
   });
 });
 

@@ -143,7 +143,7 @@ function Fleet() {
       (loaded) => {
         if (current) setInventory(loaded);
       },
-      (caught: unknown) => {
+      (caught: Error) => {
         if (current) {
           setInventoryError(
             caught instanceof Error

@@ -48,6 +48,14 @@ export class CloudApiError extends Error {
   }
 }
 
+/** The service answered, but not in the shape this client reads. */
+export class UnexpectedResponseError extends CloudApiError {
+  constructor(message: string) {
+    super(message, 502);
+    this.name = "UnexpectedResponseError";
+  }
+}
+
 export interface OrchestratorToken {
   accessToken: string;
   /** Epoch milliseconds after which the token must not be used. */
@@ -330,18 +338,24 @@ async function parseBody<Schema extends z.ZodType>(
 ): Promise<z.output<Schema>> {
   const parsed = parseJson(await response.text(), schema);
 
-  if (!parsed.success) throw new CloudApiError(failure, 502);
+  if (!parsed.success) throw new UnexpectedResponseError(failure);
 
   return parsed.data;
 }
 
-/** Parses JSON text straight into a schema; malformed JSON fails the parse. */
+/**
+ * Parses JSON text straight into a schema; malformed JSON fails the parse.
+ * Null object fields are dropped first: Go services encode empty lists and
+ * maps as null, and every field here is optional.
+ */
 export function parseJson<Schema extends z.ZodType>(
   raw: string,
   schema: Schema,
 ): z.ZodSafeParseResult<z.output<Schema>> {
   try {
-    return schema.safeParse(JSON.parse(raw));
+    return schema.safeParse(
+      JSON.parse(raw, (_key, value) => (value === null ? undefined : value)),
+    );
   } catch {
     return schema.safeParse(undefined);
   }

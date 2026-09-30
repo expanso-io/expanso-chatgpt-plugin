@@ -186,6 +186,20 @@ describe("WorkspaceClient", () => {
     });
   });
 
+  it("reads null collections the way Go services send empty ones", async () => {
+    const { fetch } = fakeFetch({
+      [`GET ${API}/nodes`]: () =>
+        Response.json({ items: null, next_token: "" }),
+      [`GET ${API}/nodes/stats`]: () =>
+        Response.json({ total_nodes: 0, nodes_by_os: null }),
+    });
+
+    const client = new WorkspaceClient(ENDPOINT, "jwt", fetch);
+
+    await expect(client.listNodes()).resolves.toEqual({ next_token: "" });
+    await expect(client.nodeStats()).resolves.toEqual({ total_nodes: 0 });
+  });
+
   it("rejects a response that is not the expected shape", async () => {
     const { fetch } = fakeFetch({
       [`GET ${API}/nodes`]: () => Response.json({ items: "nope" }),

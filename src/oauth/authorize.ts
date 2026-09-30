@@ -6,6 +6,7 @@ import {
 import type { GrantProps, LinkedWorkspace } from "../account.js";
 import {
   CloudApiError,
+  UnexpectedResponseError,
   exchangeApiKey,
   WorkspaceClient,
   type FetchLike,
@@ -18,6 +19,7 @@ import {
   notAnApiKey,
   notAnEndpoint,
   workspaceRejected,
+  type WorkspaceFailure,
 } from "./link-errors.js";
 
 export { LinkError };
@@ -221,10 +223,24 @@ export async function linkAccount(
         deps.fetch,
       ).nodeStats();
     } catch (error) {
-      throw workspaceRejected(
-        workspace.workspaceId,
-        error instanceof CloudApiError ? error.status : undefined,
+      const failure: WorkspaceFailure =
+        error instanceof UnexpectedResponseError
+          ? { kind: "unexpected" }
+          : error instanceof CloudApiError
+            ? { kind: "http", status: error.status }
+            : { kind: "unreachable" };
+
+      // Operators see which step failed; the key and token are never logged.
+      console.warn(
+        JSON.stringify({
+          event: "link_failed",
+          step: "workspace_read",
+          workspaceId: workspace.workspaceId,
+          ...failure,
+        }),
       );
+
+      throw workspaceRejected(workspace.workspaceId, failure);
     }
   }
 

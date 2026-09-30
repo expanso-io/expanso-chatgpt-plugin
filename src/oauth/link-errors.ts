@@ -67,20 +67,41 @@ export function keyForOtherWorkspace(
   );
 }
 
+/** How a workspace read failed, without any request or credential detail. */
+export type WorkspaceFailure =
+  | { kind: "http"; status: number }
+  | { kind: "unexpected" }
+  | { kind: "unreachable" };
+
 /** Explains why a workspace would not answer a read with the exchanged key. */
 export function workspaceRejected(
   workspaceId: string,
-  status: number | undefined,
+  failure: WorkspaceFailure,
 ): LinkError {
-  if (status === 401 || status === 403) {
+  if (
+    failure.kind === "http" &&
+    (failure.status === 401 || failure.status === 403)
+  ) {
     return new LinkError(
       `Workspace ${workspaceId} rejected this API key. The key belongs to a different organization or workspace; create one on workspace ${workspaceId}'s Keys page.`,
       "endpoints",
     );
   }
 
+  if (failure.kind === "unexpected") {
+    return new LinkError(
+      `Workspace ${workspaceId} answered, but not in a form Expanso Fleet can read yet. Nothing is wrong with the key or endpoint; please report this.`,
+      "endpoints",
+    );
+  }
+
+  const reason =
+    failure.kind === "http"
+      ? `it answered HTTP ${failure.status}`
+      : "there was no answer";
+
   return new LinkError(
-    `Workspace ${workspaceId} could not be reached at that endpoint. Check that the endpoint is copied exactly, including the port.`,
+    `Workspace ${workspaceId} could not be read at that endpoint (${reason}). Check that the endpoint is copied exactly, including the port.`,
     "endpoints",
   );
 }
