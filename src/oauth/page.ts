@@ -3,6 +3,10 @@ import type { ConsentDescription } from "@cloudflare/workers-oauth-provider";
 export interface LinkFormState {
   endpoints?: string;
   error?: string;
+  /** Which field the error is about, so it can be marked invalid. */
+  errorField?: "api_key" | "endpoints";
+  /** Expanso Cloud page for creating an API key. */
+  apiKeysUrl?: string;
 }
 
 export const escapeHtml = (value: string): string =>
@@ -40,7 +44,26 @@ export function linkPage(
     : "";
 
   const error = state.error
-    ? `<p class="error" role="alert">${escapeHtml(state.error)}</p>`
+    ? `<p class="error" role="alert" id="link-error">${escapeHtml(state.error)}</p>`
+    : "";
+
+  const invalid = (field: LinkFormState["errorField"]) =>
+    state.errorField === field
+      ? ' aria-invalid="true" aria-describedby="link-error"'
+      : "";
+
+  const getKey = state.apiKeysUrl
+    ? `<section class="get-key" aria-labelledby="get-key-title">
+    <h2 id="get-key-title">Get an API key</h2>
+    <p><a class="button" href="${escapeHtml(state.apiKeysUrl)}" target="_blank" rel="noopener noreferrer">Get my key from Expanso Cloud</a></p>
+    <ol>
+      <li>In Expanso Cloud, open your workspace, then <strong>Keys</strong>.</li>
+      <li>Create a key. Name it for this connection, for example <em>ChatGPT Expanso Fleet</em>, and choose <strong>No expiry</strong>.</li>
+      <li>Copy the key (it starts with <code>exp_ak_</code>) and paste it below.</li>
+      <li>In the same workspace, copy its <strong>Endpoint</strong> and paste it below.</li>
+    </ol>
+    <p class="note">Expanso Cloud keys have full access to their workspace; there are no read-only keys yet. Expanso Fleet itself only reads.</p>
+  </section>`
     : "";
 
   return `<!doctype html>
@@ -83,6 +106,14 @@ export function linkPage(
   .approve { background: var(--brand); color: var(--brand-ink); border: 1px solid var(--brand); }
   .deny { background: transparent; color: var(--ink); border: 1px solid var(--line); }
   .error { color: var(--danger); font-weight: 500; }
+  [aria-invalid="true"] { border-color: var(--danger); }
+  .get-key { border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.25rem; margin: 0 0 1.25rem; background: var(--card); }
+  .get-key h2 { font-size: 1rem; margin: 0 0 .5rem; }
+  .get-key ol { margin: .5rem 0; padding-left: 1.25rem; color: var(--muted); }
+  .get-key li { margin: .25rem 0; }
+  .get-key .note { font-size: .85rem; margin: .5rem 0 0; }
+  a.button { display: inline-block; background: var(--brand); color: var(--brand-ink); text-decoration: none; font-weight: 500; padding: .5rem 1rem; border-radius: 4px; }
+  a.button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
   .warn { color: var(--danger); }
   footer { margin-top: 1.5rem; font-size: .8rem; color: var(--muted); }
 </style>
@@ -92,14 +123,15 @@ export function linkPage(
   <h1>Connect ${client} to Expanso Fleet</h1>
   <p>${origin} Access is sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
   ${loopback}
+  ${getKey}
   <form method="post" autocomplete="off">
     <input type="hidden" name="handle" value="${escapeHtml(handle)}">
     ${error}
     <label class="field" for="api_key">Expanso API key</label>
-    <input id="api_key" name="api_key" type="password" required spellcheck="false" placeholder="exp_ak_…">
+    <input id="api_key" name="api_key" type="password" required spellcheck="false" placeholder="exp_ak_…"${invalid("api_key")}>
     <p class="hint">Create one in Expanso Cloud. It is checked with Expanso Cloud, then stored encrypted by this service. The plugin and ChatGPT never see it.</p>
     <label class="field" for="endpoints">Workspace endpoint</label>
-    <textarea id="endpoints" name="endpoints" required spellcheck="false" placeholder="your-workspace.region.cloud.expanso.io:9010">${escapeHtml(state.endpoints ?? "")}</textarea>
+    <textarea id="endpoints" name="endpoints" required spellcheck="false" placeholder="your-workspace.region.cloud.expanso.io:9010"${invalid("endpoints")}>${escapeHtml(state.endpoints ?? "")}</textarea>
     <p class="hint">Copy it from Expanso Cloud: your workspace, then Endpoint. One per line to link several workspaces in the same organization.</p>
     <label class="field">Access</label>
     ${scopes}

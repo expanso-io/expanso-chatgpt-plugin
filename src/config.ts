@@ -10,6 +10,8 @@ export interface Env {
   PUBLIC_BASE_URL?: string;
   /** Expanso Cloud origin that exchanges API keys for orchestrator tokens. */
   EXPANSO_CLOUD_URL?: string;
+  /** Expanso Cloud console origin linked from the sign-in page. */
+  EXPANSO_CONSOLE_URL?: string;
   /** Comma separated host suffixes a workspace endpoint may use. */
   ALLOWED_ENDPOINT_SUFFIXES?: string;
 }
@@ -17,6 +19,9 @@ export interface Env {
 export const DEFAULT_CLOUD_URL = "https://cloud.expanso.io";
 
 export const DEFAULT_ENDPOINT_SUFFIXES = [".expanso.io"];
+
+/** Where people sign in to Expanso Cloud to create API keys. */
+export const DEFAULT_CONSOLE_URL = "https://cloud.expanso.io";
 
 export const SCOPES = {
   fleetRead: "fleet:read",
@@ -26,6 +31,7 @@ export const SCOPES = {
 export interface ServiceConfig {
   publicBaseUrl: string;
   cloudUrl: string;
+  consoleUrl: string;
   endpointSuffixes: string[];
 }
 
@@ -48,7 +54,33 @@ export function serviceConfig(env: Env, requestUrl: string): ServiceConfig {
         .filter((suffix) => suffix.length > 0)
     : DEFAULT_ENDPOINT_SUFFIXES;
 
-  return { publicBaseUrl, cloudUrl, endpointSuffixes };
+  const consoleUrl = trimTrailingSlash(
+    env.EXPANSO_CONSOLE_URL ?? DEFAULT_CONSOLE_URL,
+  );
+
+  return { publicBaseUrl, cloudUrl, consoleUrl, endpointSuffixes };
+}
+
+/** A workspace as Expanso Cloud addresses it in console URLs. */
+export interface ConsoleWorkspace {
+  orgSlug: string;
+  workspaceSlug: string;
+}
+
+/**
+ * The page where API keys are created. Keys belong to a workspace, and Cloud
+ * has no deep link that works without the organization and workspace slugs,
+ * which differ from the workspace ID in the endpoint. Until Cloud can list a
+ * key holder's workspaces (expanso-io/expanso-cloud#1965), callers pass no
+ * workspace and people are told to open their workspace, then Keys.
+ */
+export function apiKeysPageUrl(
+  consoleUrl: string,
+  workspace?: ConsoleWorkspace,
+): string {
+  if (!workspace) return `${consoleUrl}/`;
+
+  return `${consoleUrl}/${encodeURIComponent(workspace.orgSlug)}/workspaces/${encodeURIComponent(workspace.workspaceSlug)}/keys`;
 }
 
 function trimTrailingSlash(value: string): string {

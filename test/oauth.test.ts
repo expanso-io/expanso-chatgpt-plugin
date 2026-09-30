@@ -13,7 +13,12 @@ import type { JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Env } from "../src/config.js";
 import { open } from "../src/crypto.js";
-import { linkAccount, opaqueAccountId } from "../src/oauth/authorize.js";
+import { apiKeysPageUrl } from "../src/config.js";
+import {
+  LinkError,
+  linkAccount,
+  opaqueAccountId,
+} from "../src/oauth/authorize.js";
 import { linkPage } from "../src/oauth/page.js";
 import worker from "../src/worker.js";
 import {
@@ -39,6 +44,7 @@ const REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect";
 const config = {
   publicBaseUrl: BASE,
   cloudUrl: CLOUD,
+  consoleUrl: "https://console.test",
   endpointSuffixes: [".expanso.io"],
 };
 
@@ -115,7 +121,9 @@ describe("linkAccount", () => {
         encryptionKey: TEST_ENCRYPTION_KEY,
         fetch,
       }),
-    ).rejects.toThrow(/only covers workspace ws1/);
+    ).rejects.toThrow(
+      /created for workspace ws1, so it cannot open workspace ws2/,
+    );
   });
 
   it("refuses a workspace that does not accept the key", async () => {
@@ -130,11 +138,140 @@ describe("linkAccount", () => {
         encryptionKey: TEST_ENCRYPTION_KEY,
         fetch,
       }),
-    ).rejects.toThrow(/did not accept this API key/);
+    ).rejects.toThrow(/Workspace ws1 rejected this API key/);
+  });
+});
+
+describe("linkAccount errors", () => {
+  const link = (apiKey: string, endpoints: string, routes = cloudRoutes()) => {
+    const recorded = fakeFetch(routes);
+
+    return {
+      recorded,
+      result: linkAccount(apiKey, endpoints, {
+        config,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetch: recorded.fetch,
+      }).then(
+        () => undefined,
+        (caught: LinkError) => caught,
+      ),
+    };
+  };
+
+  it("says when the pasted value is not an API key, without calling Cloud", async () => {
+    const { recorded, result } = link("sk-something-else", ENDPOINT);
+    const error = await result;
+
+    expect(error?.field).toBe("api_key");
+    expect(error?.message).toMatch(/not an Expanso API key/);
+    expect(recorded.requests).toHaveLength(0);
+  });
+
+  it("names a mistyped endpoint and shows the expected shape", async () => {
+    const error = await link(API_KEY, "https://cloud.expanso.io/acme").result;
+
+    expect(error?.field).toBe("endpoints");
+    expect(error?.message).toMatch(/is not an Expanso workspace endpoint/);
+    expect(error?.message).toContain("cloud.expanso.io:9010");
+  });
+
+  it.each([
+    [401, /does not recognize this API key/],
+    [403, /refused this API key \(HTTP 403\)/],
+    [502, /could not check the key \(HTTP 502\)/],
+  ])("explains a Cloud %i when checking the key", async (status, message) => {
+    const error = await link(API_KEY, ENDPOINT, {
+      ...cloudRoutes(),
+      [`POST ${CLOUD}/api/v1/auth/token`]: fail(status, "nope"),
+    }).result;
+
+    expect(error?.field).toBe("api_key");
+    expect(error?.message).toMatch(message);
+    expect(error?.message).not.toContain(API_KEY);
+  });
+
+  it("says when Cloud cannot be reached", async () => {
+    const recorded = fakeFetch({});
+
+    const error = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: () => Promise.reject(new TypeError("network down")),
+    }).then(
+      () => undefined,
+      (caught: LinkError) => caught,
+    );
+
+    expect(recorded.requests).toHaveLength(0);
+    expect(error?.message).toMatch(/could not be reached to check the key/);
+  });
+
+  it("says when the workspace endpoint does not answer", async () => {
+    const error = await link(API_KEY, ENDPOINT, {
+      ...cloudRoutes(),
+      [`GET ${API}/nodes/stats`]: fail(404, "no route"),
+    }).result;
+
+    expect(error?.field).toBe("endpoints");
+    expect(error?.message).toMatch(/could not be reached at that endpoint/);
+  });
+});
+
+describe("apiKeysPageUrl", () => {
+  it("links the console until a workspace is known", () => {
+    expect(apiKeysPageUrl("https://cloud.expanso.io")).toBe(
+      "https://cloud.expanso.io/",
+    );
+  });
+
+  it("links a workspace's Keys page when its slugs are known", () => {
+    expect(
+      apiKeysPageUrl("https://cloud.expanso.io", {
+        orgSlug: "acme",
+        workspaceSlug: "edge west",
+      }),
+    ).toBe("https://cloud.expanso.io/acme/workspaces/edge%20west/keys");
   });
 });
 
 describe("linking page", () => {
+  const details = {
+    clientId: "c",
+    clientName: "ChatGPT",
+    redirectUri: "https://chatgpt.com/cb",
+    redirectHost: "chatgpt.com",
+    redirectIsLoopback: false,
+    scope: ["fleet:read"],
+  };
+
+  it("offers a Get my key button that opens Expanso Cloud in a new tab", () => {
+    const html = linkPage(details, "h", {
+      apiKeysUrl: "https://cloud.expanso.io/",
+    });
+
+    expect(html).toMatch(
+      /<a class="button" href="https:\/\/cloud\.expanso\.io\/" target="_blank" rel="noopener noreferrer">Get my key from Expanso Cloud<\/a>/,
+    );
+
+    expect(html).toContain("No expiry");
+    expect(html).toContain("full access to their workspace");
+  });
+
+  it("leaves the button out when no key page is configured", () => {
+    expect(linkPage(details, "h")).not.toContain("Get my key");
+  });
+
+  it("marks the field an error is about", () => {
+    const html = linkPage(details, "h", {
+      error: "bad endpoint",
+      errorField: "endpoints",
+    });
+
+    expect(html).toMatch(/id="endpoints"[^>]*aria-invalid="true"/);
+    expect(html).not.toMatch(/id="api_key"[^>]*aria-invalid/);
+  });
+
   it("escapes everything a client can choose", () => {
     const html = linkPage(
       {
@@ -387,7 +524,8 @@ describe("OAuth front door", () => {
 
     const html = await response.text();
 
-    expect(html).toContain("access was denied");
+    expect(html).toContain("Expanso Cloud does not recognize this API key");
+    expect(html).toMatch(/id="api_key"[^>]*aria-invalid="true"/);
     expect(html).not.toContain(API_KEY);
   });
 

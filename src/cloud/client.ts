@@ -32,6 +32,12 @@ const API_KEY_PREFIX = "exp_ak_";
 
 const DEFAULT_TOKEN_SECONDS = 3600;
 
+/**
+ * Expanso Cloud's edge firewall rejects requests without a User-Agent, and
+ * Worker fetch sends none by default, so every outbound call names itself.
+ */
+export const USER_AGENT = "expanso-fleet-mcp/0.1.0";
+
 export class CloudApiError extends Error {
   constructor(
     message: string,
@@ -74,7 +80,11 @@ export async function exchangeApiKey(
 
   const response = await fetchImpl(`${cloudUrl}/api/v1/auth/token`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    headers: {
+      Authorization: `Bearer ${key}`,
+      Accept: "application/json",
+      "User-Agent": USER_AGENT,
+    },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
@@ -274,6 +284,7 @@ export class WorkspaceClient {
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
         Accept: "application/json",
+        "User-Agent": USER_AGENT,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -339,7 +350,7 @@ async function toError(response: Response, fallback: string): Promise<Error> {
 
   const reason =
     response.status === 401 || response.status === 403
-      ? "access was denied"
+      ? `access was denied (HTTP ${response.status})`
       : response.status === 404
         ? "not found"
         : `HTTP ${response.status}`;

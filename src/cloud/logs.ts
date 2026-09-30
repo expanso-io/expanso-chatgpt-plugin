@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assertSafeId } from "../config.js";
-import { parseJson } from "./client.js";
+import { USER_AGENT, parseJson } from "./client.js";
 
 /** Hard ceilings. Callers can ask for less, never more. */
 export const LOG_LIMITS = {
@@ -209,7 +209,11 @@ function clamp(value: number, min: number, max: number): number {
 /** Opens an outbound WebSocket from a Worker with a bearer token header. */
 export const openWorkerSocket: OpenLogSocket = async (url, token) => {
   const response = await fetch(url, {
-    headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    headers: {
+      Upgrade: "websocket",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+    },
   });
 
   const ws = response.webSocket;

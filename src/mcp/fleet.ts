@@ -1,4 +1,5 @@
 import type { WorkspaceClient } from "../cloud/client.js";
+import type { Page } from "../cloud/types.js";
 import type { LinkedWorkspace } from "../account.js";
 import type { FleetSummary } from "./contracts.js";
 
@@ -100,4 +101,60 @@ export function describeFleet(summary: FleetSummary): string {
   }
 
   return lines.join("\n");
+}
+
+/** Rows read at most when a list filter has to be applied here. */
+export const FILTER_SCAN_LIMIT = 200;
+
+export interface FilteredList<View> {
+  items: View[];
+  more: boolean;
+  /** Rows read. Set only when rows were left unread because of the scan limit. */
+  partialScan?: number;
+}
+
+/**
+ * Reads pages until `limit` rows match or FILTER_SCAN_LIMIT rows were read,
+ * so a filter the server cannot apply does not stop at the first page.
+ */
+export async function listFiltered<Item, View>(
+  fetchPage: (options: {
+    limit: number;
+    nextToken?: string;
+  }) => Promise<Page<Item>>,
+  toView: (item: Item) => View,
+  matches: ((view: View) => boolean) | undefined,
+  limit: number,
+): Promise<FilteredList<View>> {
+  if (!matches) {
+    const page = await fetchPage({ limit });
+
+    return {
+      items: (page.items ?? []).map(toView),
+      more: Boolean(page.next_token),
+    };
+  }
+
+  const found: View[] = [];
+  let scanned = 0;
+  let nextToken: string | undefined;
+
+  do {
+    const page = await fetchPage({
+      limit: FILTER_SCAN_LIMIT - scanned,
+      nextToken,
+    });
+
+    const items = page.items ?? [];
+
+    scanned += items.length;
+    found.push(...items.map(toView).filter(matches));
+    nextToken = items.length > 0 ? page.next_token || undefined : undefined;
+  } while (nextToken && found.length < limit && scanned < FILTER_SCAN_LIMIT);
+
+  return {
+    items: found.slice(0, limit),
+    more: Boolean(nextToken) || found.length > limit,
+    ...(nextToken && found.length < limit ? { partialScan: scanned } : {}),
+  };
 }

@@ -14,7 +14,7 @@ import {
   type OpenLogSocket,
 } from "../cloud/logs.js";
 import type { ExecutionState } from "../cloud/types.js";
-import { describeFleet, fleetSummary } from "./fleet.js";
+import { describeFleet, fleetSummary, listFiltered } from "./fleet.js";
 import { searchMentions } from "./mentions.js";
 import {
   ERROR_EXECUTION_STATES,
@@ -78,6 +78,12 @@ function result(structuredContent: StructuredContent, text: string) {
     content: [{ type: "text" as const, text }],
     structuredContent,
   };
+}
+
+function scanNote(scanned: number | undefined, noun: string): string {
+  return scanned === undefined
+    ? ""
+    : ` among the ${scanned} most recent ${noun} checked; older ${noun} were not searched`;
 }
 
 /**
@@ -188,15 +194,18 @@ export function buildServer(options: ServerOptions): McpServer {
     },
     async ({ workspaceId, prefix, onlyOffline, limit }) => {
       const client = await account.client(workspaceId);
-      const page = await client.listNodes({ prefix, limit: limit ?? 50 });
+      const list = await listFiltered(
+        (page) => client.listNodes({ prefix, ...page }),
+        nodeView,
+        onlyOffline ? (node) => !node.online : undefined,
+        limit ?? 50,
+      );
 
-      const nodes = (page.items ?? [])
-        .map(nodeView)
-        .filter((node) => !onlyOffline || !node.online);
+      const nodes = list.items;
 
       return result(
-        { nodes, more: Boolean(page.next_token) },
-        `${nodes.length} nodes (${nodes.filter((node) => node.online).length} online).`,
+        { nodes, more: list.more },
+        `${nodes.length} nodes (${nodes.filter((node) => node.online).length} online)${scanNote(list.partialScan, "nodes")}.`,
       );
     },
   );
@@ -246,15 +255,16 @@ export function buildServer(options: ServerOptions): McpServer {
     async ({ workspaceId, prefix, state, limit }) => {
       const client = await account.client(workspaceId);
       // "degraded" is not a server-side filter, so state is applied here.
-      const page = await client.listJobs({ prefix, limit: limit ?? 50 });
-
-      const jobs = (page.items ?? [])
-        .map(jobView)
-        .filter((job) => !state || job.state === state);
+      const list = await listFiltered(
+        (page) => client.listJobs({ prefix, ...page }),
+        jobView,
+        state ? (job) => job.state === state : undefined,
+        limit ?? 50,
+      );
 
       return result(
-        { jobs, more: Boolean(page.next_token) },
-        `${jobs.length} jobs.`,
+        { jobs: list.items, more: list.more },
+        `${list.items.length} jobs${scanNote(list.partialScan, "jobs")}.`,
       );
     },
   );
@@ -405,7 +415,9 @@ export function buildServer(options: ServerOptions): McpServer {
         nodeId: z
           .string()
           .optional()
-          .describe("Node to read from. Defaults to a node running the job."),
+          .describe(
+            "Node to read from. Defaults to the node of the job's most recently updated execution.",
+          ),
         lookbackMinutes: limitArg(LOG_LIMITS.maxLookbackMinutes, 15),
         maxLines: limitArg(LOG_LIMITS.maxLines, 100),
       }),
@@ -423,12 +435,9 @@ export function buildServer(options: ServerOptions): McpServer {
       let targetNode = nodeId;
 
       if (targetNode === undefined) {
-        const active = await client.jobExecutions(jobId, {
-          states: ["running", "degraded"],
-          limit: 5,
-        });
+        const recent = await client.jobExecutions(jobId, { limit: 5 });
 
-        targetNode = active.items?.find((item) => item.node_id)?.node_id;
+        targetNode = recent.items?.find((item) => item.node_id)?.node_id;
       }
 
       const token = await account.accessToken();

@@ -26,6 +26,11 @@ describe("exchangeApiKey", () => {
 
     expect(requests[0].headers.get("authorization")).toBe(`Bearer ${KEY}`);
 
+    // Cloud's edge firewall blocks requests that carry no User-Agent.
+    expect(requests[0].headers.get("user-agent")).toMatch(
+      /^expanso-fleet-mcp\//,
+    );
+
     expect(token.claims).toEqual({
       sub: "usr_fixture_1",
       email: "operator@example.com",

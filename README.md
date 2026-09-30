@@ -59,6 +59,11 @@ the stream. The model only ever sees that snapshot.
 | Sign-in is API-key linking on this service's page.                                                   | "Sign in with Expanso" through MCP-compatible OAuth in Cloud. |
 | You type the workspace endpoint (Expanso Cloud: your workspace, then Endpoint). Several are allowed. | Pick the organization and workspace from a list.              |
 | Logs are a capped read of the live stream.                                                           | A bounded log snapshot endpoint with cursors.                 |
+| The key button opens Expanso Cloud; you open your workspace, then Keys.                              | Link straight to the workspace's Keys page.                   |
+
+Expanso Cloud API keys have no read-only scope yet: the key you paste has full
+access to its workspace. Expanso Fleet only reads, and the key stays sealed on
+the service.
 
 These are tracked in expanso-io/expanso-cloud. The plugin stays a personal
 install until "Sign in with Expanso" ships; it is not in the public plugin
@@ -85,8 +90,11 @@ This builds the plugin into `dist/plugin/expanso-fleet`, copies it to
 1. Restart the ChatGPT desktop app.
 2. Open the Plugins Directory, choose your personal marketplace, and install
    **Expanso Fleet**.
-3. On the sign-in page, paste your Expanso API key and workspace endpoint,
-   then choose **Connect**.
+3. On the sign-in page, choose **Get my key from Expanso Cloud**. In Cloud,
+   open your workspace, then **Keys**, and create a key named for this
+   connection with no expiry. Paste it and the workspace's **Endpoint** into
+   the page, then choose **Connect**. If something is wrong, the page says
+   which value failed and why.
 4. Onboarding confirms your default workspace and opens the Fleet view.
 5. In a chat, type `@` and pick a job, then ask why it is degraded.
 

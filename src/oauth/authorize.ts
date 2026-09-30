@@ -5,14 +5,30 @@ import {
 } from "@cloudflare/workers-oauth-provider";
 import type { GrantProps, LinkedWorkspace } from "../account.js";
 import {
+  CloudApiError,
   exchangeApiKey,
   WorkspaceClient,
-  CloudApiError,
   type FetchLike,
+  type OrchestratorToken,
 } from "../cloud/client.js";
-import { parseWorkspaceEndpoint, type ServiceConfig } from "../config.js";
+import {
+  LinkError,
+  keyForOtherWorkspace,
+  keyRejected,
+  notAnApiKey,
+  notAnEndpoint,
+  workspaceRejected,
+} from "./link-errors.js";
+
+export { LinkError };
+
+import {
+  apiKeysPageUrl,
+  parseWorkspaceEndpoint,
+  type ServiceConfig,
+} from "../config.js";
 import { seal } from "../crypto.js";
-import { errorPage, linkPage, PAGE_CSP } from "./page.js";
+import { errorPage, linkPage, PAGE_CSP, type LinkFormState } from "./page.js";
 
 export const MAX_LINKED_WORKSPACES = 5;
 
@@ -59,7 +75,7 @@ export async function handleAuthorize(
 async function showPage(
   request: Request,
   deps: AuthorizeDeps,
-  state: { endpoints?: string; error?: string } = {},
+  state: LinkFormState = {},
 ): Promise<Response> {
   const authRequest = await deps.oauth.parseAuthRequest(request);
   const details = await deps.oauth.describeConsent(authRequest);
@@ -68,7 +84,12 @@ async function showPage(
   consent.headers.set("Content-Security-Policy", PAGE_CSP);
   consent.headers.set("Referrer-Policy", "no-referrer");
 
-  return new Response(linkPage(details, consent.handle, state), {
+  const page = linkPage(details, consent.handle, {
+    ...state,
+    apiKeysUrl: apiKeysPageUrl(deps.config.consoleUrl),
+  });
+
+  return new Response(page, {
     status: state.error ? 400 : 200,
     headers: consent.headers,
   });
@@ -97,7 +118,7 @@ async function submit(
   try {
     linked = await linkAccount(apiKey, endpointsText, deps);
   } catch (error) {
-    if (error instanceof LinkError || error instanceof CloudApiError) {
+    if (error instanceof LinkError) {
       // Show the form again with a fresh consent handle. The key is never echoed.
       // The authorization parameters live in the query string, so re-parse them
       // from a GET of the same URL rather than from this form body.
@@ -109,6 +130,7 @@ async function submit(
       return showPage(retry, deps, {
         endpoints: endpointsText,
         error: error.message,
+        errorField: error.field,
       });
     }
 
@@ -132,8 +154,6 @@ async function submit(
   return new Response(null, { status: 302, headers: approved.headers });
 }
 
-export class LinkError extends Error {}
-
 /** Validates the key and workspaces, and returns the grant props to store. */
 export async function linkAccount(
   apiKey: string,
@@ -146,12 +166,13 @@ export async function linkAccount(
     .filter((item) => item.length > 0);
 
   if (rawEndpoints.length === 0) {
-    throw new LinkError("Enter at least one workspace endpoint.");
+    throw new LinkError("Enter at least one workspace endpoint.", "endpoints");
   }
 
   if (rawEndpoints.length > MAX_LINKED_WORKSPACES) {
     throw new LinkError(
       `Link at most ${MAX_LINKED_WORKSPACES} workspaces at a time.`,
+      "endpoints",
     );
   }
 
@@ -164,14 +185,23 @@ export async function linkAccount(
       if (!workspaces.some((item) => item.workspaceId === parsed.workspaceId)) {
         workspaces.push(parsed);
       }
-    } catch (error) {
-      throw new LinkError(
-        `${raw}: ${error instanceof Error ? error.message : "Unexpected error."}`,
-      );
+    } catch {
+      throw notAnEndpoint(raw);
     }
   }
 
-  const token = await exchangeApiKey(deps.config.cloudUrl, apiKey, deps.fetch);
+  if (!apiKey.trim().startsWith("exp_ak_")) throw notAnApiKey();
+
+  let token: OrchestratorToken;
+
+  try {
+    token = await exchangeApiKey(deps.config.cloudUrl, apiKey, deps.fetch);
+  } catch (error) {
+    throw keyRejected(
+      error instanceof CloudApiError ? error.status : undefined,
+    );
+  }
+
   const { claims } = token;
 
   for (const workspace of workspaces) {
@@ -179,9 +209,7 @@ export async function linkAccount(
       claims.networkId !== "*" &&
       claims.networkId !== workspace.workspaceId
     ) {
-      throw new LinkError(
-        `This API key only covers workspace ${claims.networkId}, not ${workspace.workspaceId}.`,
-      );
+      throw keyForOtherWorkspace(claims.networkId, workspace.workspaceId);
     }
 
     // The orchestrator enforces the token's organization, so a successful read
@@ -193,8 +221,9 @@ export async function linkAccount(
         deps.fetch,
       ).nodeStats();
     } catch (error) {
-      throw new LinkError(
-        `Workspace ${workspace.workspaceId} did not accept this API key. ${error instanceof Error ? error.message : "Unexpected error."}`,
+      throw workspaceRejected(
+        workspace.workspaceId,
+        error instanceof CloudApiError ? error.status : undefined,
       );
     }
   }
