@@ -1,0 +1,6 @@
+dist/
+app/dist/
+src/generated/
+node_modules/
+.wrangler/
+package-lock.json

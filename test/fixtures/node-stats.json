@@ -1,0 +1,6 @@
+{
+  "total_nodes": 4,
+  "nodes_by_connection_state": { "connected": 3, "lost": 1 },
+  "nodes_by_os": { "linux": 4 },
+  "nodes_by_arch": { "amd64": 3, "arm64": 1 }
+}

@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "id": "job-ingest-7f3a",
+      "spec": {
+        "name": "ingest-sensors",
+        "type": "pipeline",
+        "labels": { "env": "prod" },
+        "config": { "input": { "secret_ref": "must-not-leak" } }
+      },
+      "status": {
+        "state": {
+          "state_type": "degraded",
+          "message": "1 of 3 executions degraded"
+        },
+        "version": 4,
+        "updated_at": "2026-09-30T18:40:00Z"
+      }
+    },
+    {
+      "id": "job-rollup-19c2",
+      "spec": { "name": "hourly-rollup", "type": "pipeline" },
+      "status": {
+        "state": {
+          "state_type": "running",
+          "message": "Job running on 3 nodes"
+        },
+        "version": 2,
+        "updated_at": "2026-09-30T17:00:00Z"
+      }
+    },
+    {
+      "id": "job-export-5d10",
+      "spec": { "name": "export-archive", "type": "pipeline" },
+      "status": {
+        "state": { "state_type": "failed", "message": "No healthy executions" },
+        "version": 1,
+        "updated_at": "2026-09-30T16:00:00Z"
+      }
+    }
+  ],
+  "next_token": "page-2"
+}

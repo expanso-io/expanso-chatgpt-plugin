@@ -1,0 +1,14 @@
+{
+  "job": {
+    "id": "job-ingest-7f3a",
+    "spec": { "name": "ingest-sensors", "type": "pipeline" },
+    "status": {
+      "state": {
+        "state_type": "degraded",
+        "message": "1 of 3 executions degraded"
+      },
+      "version": 4,
+      "updated_at": "2026-09-30T18:40:00Z"
+    }
+  }
+}

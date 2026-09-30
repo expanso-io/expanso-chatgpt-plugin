@@ -1,0 +1,7 @@
+{
+  "sub": "usr_fixture_1",
+  "email": "operator@example.com",
+  "organizationId": "org_fixture",
+  "role": "user",
+  "networkId": "ws1"
+}
