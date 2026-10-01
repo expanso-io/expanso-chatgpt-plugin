@@ -1,10 +1,10 @@
 import type { ConsentDescription } from "@cloudflare/workers-oauth-provider";
 
 export interface LinkFormState {
-  endpoints?: string;
+  endpoint?: string;
   error?: string;
   /** Which field the error is about, so it can be marked invalid. */
-  errorField?: "api_key" | "endpoints";
+  errorField?: "api_key" | "endpoint";
   /** Expanso Cloud page for creating an API key. */
   apiKeysUrl?: string;
 }
@@ -43,6 +43,77 @@ export function linkPage(
     ? '<p class="warn">This sends access to an app on your computer. Continue only if you just started connecting from it.</p>'
     : "";
 
+  return pageShell(
+    "Connect Expanso Fleet",
+    `<h1>Connect ${client} to Expanso Fleet</h1>
+  <p>${origin} Access is sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
+  ${loopback}
+  ${getKeySection(state.apiKeysUrl)}
+  <form method="post" autocomplete="off">
+    <input type="hidden" name="handle" value="${escapeHtml(handle)}">
+    ${keyAndEndpointFields(state)}
+    <label class="field">Access</label>
+    ${scopes}
+    <div class="actions">
+      <button class="approve" name="decision" value="approve">Connect</button>
+      <button class="deny" name="decision" value="deny" formnovalidate>Cancel</button>
+    </div>
+  </form>`,
+  );
+}
+
+export interface AddWorkspaceState extends LinkFormState {
+  /** The one-time link token this page was opened with. */
+  token: string;
+}
+
+/**
+ * Connects another workspace, or reconnects one whose key stopped working,
+ * for an account that is already signed in. Reached only through a one-time
+ * link that a tool call minted for that account.
+ */
+export function addWorkspacePage(state: AddWorkspaceState): string {
+  return pageShell(
+    "Connect a workspace",
+    `<h1>Connect an Expanso workspace</h1>
+  <p>Expanso Fleet reads one workspace at a time. Connecting this one makes it the active workspace; workspaces you connected before stay connected.</p>
+  ${getKeySection(state.apiKeysUrl)}
+  <form method="post" autocomplete="off">
+    <input type="hidden" name="token" value="${escapeHtml(state.token)}">
+    ${keyAndEndpointFields(state)}
+    <div class="actions">
+      <button class="approve" name="decision" value="approve">Connect</button>
+    </div>
+  </form>`,
+  );
+}
+
+/** Shown after a workspace is connected through an add-workspace link. */
+export function connectedPage(workspaceId: string): string {
+  return pageShell(
+    "Workspace connected",
+    `<h1>Workspace ${escapeHtml(workspaceId)} is connected</h1>
+  <p>It is now the active workspace. Go back to ChatGPT and ask about your fleet again.</p>`,
+  );
+}
+
+function getKeySection(apiKeysUrl: string | undefined): string {
+  if (!apiKeysUrl) return "";
+
+  return `<section class="get-key" aria-labelledby="get-key-title">
+    <h2 id="get-key-title">Get an API key</h2>
+    <p><a class="button" href="${escapeHtml(apiKeysUrl)}" target="_blank" rel="noopener noreferrer">Get my key from Expanso Cloud</a></p>
+    <ol>
+      <li>In Expanso Cloud, open your workspace, then <strong>Keys</strong>.</li>
+      <li>Create a key. Name it for this connection, for example <em>ChatGPT Expanso Fleet</em>, and choose <strong>No expiry</strong>.</li>
+      <li>Copy the key (it starts with <code>exp_ak_</code>) and paste it below.</li>
+      <li>In the same workspace, copy its <strong>Endpoint</strong> and paste it below.</li>
+    </ol>
+    <p class="note">Expanso Cloud keys have full access to their workspace; there are no read-only keys yet. Expanso Fleet itself only reads.</p>
+  </section>`;
+}
+
+function keyAndEndpointFields(state: LinkFormState): string {
   const error = state.error
     ? `<p class="error" role="alert" id="link-error">${escapeHtml(state.error)}</p>`
     : "";
@@ -52,27 +123,23 @@ export function linkPage(
       ? ' aria-invalid="true" aria-describedby="link-error"'
       : "";
 
-  const getKey = state.apiKeysUrl
-    ? `<section class="get-key" aria-labelledby="get-key-title">
-    <h2 id="get-key-title">Get an API key</h2>
-    <p><a class="button" href="${escapeHtml(state.apiKeysUrl)}" target="_blank" rel="noopener noreferrer">Get my key from Expanso Cloud</a></p>
-    <ol>
-      <li>In Expanso Cloud, open your workspace, then <strong>Keys</strong>.</li>
-      <li>Create a key. Name it for this connection, for example <em>ChatGPT Expanso Fleet</em>, and choose <strong>No expiry</strong>.</li>
-      <li>Copy the key (it starts with <code>exp_ak_</code>) and paste it below.</li>
-      <li>In the same workspace, copy its <strong>Endpoint</strong> and paste it below.</li>
-    </ol>
-    <p class="note">Expanso Cloud keys have full access to their workspace; there are no read-only keys yet. Expanso Fleet itself only reads.</p>
-  </section>`
-    : "";
+  return `${error}
+    <label class="field" for="api_key">Expanso API key</label>
+    <input id="api_key" name="api_key" type="password" required spellcheck="false" placeholder="exp_ak_…"${invalid("api_key")}>
+    <p class="hint">Create one in Expanso Cloud. It is checked with Expanso Cloud, then stored encrypted by this service. The plugin and ChatGPT never see it.</p>
+    <label class="field" for="endpoint">Workspace endpoint</label>
+    <input id="endpoint" name="endpoint" type="text" required spellcheck="false" placeholder="your-workspace.region.cloud.expanso.io:9010" value="${escapeHtml(state.endpoint ?? "")}"${invalid("endpoint")}>
+    <p class="hint">Copy it from Expanso Cloud: your workspace, then Endpoint. Expanso Fleet reads this one workspace; you can connect others later and switch between them.</p>`;
+}
 
+function pageShell(title: string, main: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Connect Expanso Fleet</title>
+<title>${escapeHtml(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -95,10 +162,9 @@ export function linkPage(
   form { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 1.5rem; }
   label.field { display: block; font-weight: 500; margin: 1.1rem 0 .35rem; }
   .hint { font-size: .85rem; color: var(--muted); margin: .3rem 0 0; }
-  input[type=password], textarea { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
+  input[type=password], input[type=text] { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
     border-radius: 4px; background: var(--paper); color: var(--ink); font: 14px "IBM Plex Mono", monospace; }
-  textarea { min-height: 4.5rem; resize: vertical; }
-  input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
   .scope { display: flex; gap: .5rem; align-items: baseline; margin: .35rem 0; font-weight: 400; }
   .scope code { font: 12px "IBM Plex Mono", monospace; color: var(--muted); }
   .actions { display: flex; gap: .75rem; margin-top: 1.5rem; }
@@ -120,26 +186,7 @@ export function linkPage(
 </head>
 <body>
 <main>
-  <h1>Connect ${client} to Expanso Fleet</h1>
-  <p>${origin} Access is sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
-  ${loopback}
-  ${getKey}
-  <form method="post" autocomplete="off">
-    <input type="hidden" name="handle" value="${escapeHtml(handle)}">
-    ${error}
-    <label class="field" for="api_key">Expanso API key</label>
-    <input id="api_key" name="api_key" type="password" required spellcheck="false" placeholder="exp_ak_…"${invalid("api_key")}>
-    <p class="hint">Create one in Expanso Cloud. It is checked with Expanso Cloud, then stored encrypted by this service. The plugin and ChatGPT never see it.</p>
-    <label class="field" for="endpoints">Workspace endpoint</label>
-    <textarea id="endpoints" name="endpoints" required spellcheck="false" placeholder="your-workspace.region.cloud.expanso.io:9010"${invalid("endpoints")}>${escapeHtml(state.endpoints ?? "")}</textarea>
-    <p class="hint">Copy it from Expanso Cloud: your workspace, then Endpoint. One per line to link several workspaces in the same organization.</p>
-    <label class="field">Access</label>
-    ${scopes}
-    <div class="actions">
-      <button class="approve" name="decision" value="approve">Connect</button>
-      <button class="deny" name="decision" value="deny" formnovalidate>Cancel</button>
-    </div>
-  </form>
+  ${main}
   <footer>Read-only. Expanso Fleet for ChatGPT cannot deploy, stop, or change anything in Expanso.</footer>
 </main>
 </body>

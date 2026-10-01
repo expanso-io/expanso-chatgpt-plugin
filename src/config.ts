@@ -14,6 +14,11 @@ export interface Env {
   EXPANSO_CONSOLE_URL?: string;
   /** Comma separated host suffixes a workspace endpoint may use. */
   ALLOWED_ENDPOINT_SUFFIXES?: string;
+  /**
+   * Set once Expanso Cloud serves the ChatGPT connect API
+   * (expanso-io/expanso-cloud#1967). Unset, people paste a key instead.
+   */
+  EXPANSO_CONNECT_API?: string;
 }
 
 export const DEFAULT_CLOUD_URL = "https://cloud.expanso.io";
@@ -33,6 +38,8 @@ export interface ServiceConfig {
   cloudUrl: string;
   consoleUrl: string;
   endpointSuffixes: string[];
+  /** True when the Cloud connect API is switched on; see EXPANSO_CONNECT_API. */
+  connectApi: boolean;
 }
 
 export function serviceConfig(env: Env, requestUrl: string): ServiceConfig {
@@ -58,7 +65,13 @@ export function serviceConfig(env: Env, requestUrl: string): ServiceConfig {
     env.EXPANSO_CONSOLE_URL ?? DEFAULT_CONSOLE_URL,
   );
 
-  return { publicBaseUrl, cloudUrl, consoleUrl, endpointSuffixes };
+  return {
+    publicBaseUrl,
+    cloudUrl,
+    consoleUrl,
+    endpointSuffixes,
+    connectApi: Boolean(env.EXPANSO_CONNECT_API),
+  };
 }
 
 /** A workspace as Expanso Cloud addresses it in console URLs. */

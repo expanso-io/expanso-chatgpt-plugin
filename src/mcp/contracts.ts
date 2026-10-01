@@ -74,7 +74,22 @@ export const FleetSummarySchema = z.object({
     needsAttention: z.array(JobViewSchema),
   }),
   recentErrors: z.array(ExecutionViewSchema),
+  /** A warning to show, such as an API key that expires soon. */
+  notice: z.string().optional(),
 });
+
+/** Returned instead of data when the workspace cannot be read. */
+export const ConnectionStateSchema = z.object({
+  connection: z.object({
+    status: z.enum(["not_connected", "reconnect"]),
+    workspaceId: z.string().optional(),
+    message: z.string(),
+    /** One-time link to connect or reconnect the workspace. */
+    reconnectUrl: z.string(),
+  }),
+});
+
+export type ConnectionStateView = z.infer<typeof ConnectionStateSchema>;
 
 export const JobDetailSchema = z.object({
   job: JobViewSchema,

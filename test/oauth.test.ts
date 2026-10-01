@@ -12,7 +12,6 @@ import { getPlatformProxy, type PlatformProxy } from "wrangler";
 import type { JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Env } from "../src/config.js";
-import { open } from "../src/crypto.js";
 import { apiKeysPageUrl } from "../src/config.js";
 import {
   LinkError,
@@ -47,6 +46,7 @@ const config = {
   cloudUrl: CLOUD,
   consoleUrl: "https://console.test",
   endpointSuffixes: [".expanso.io"],
+  connectApi: false,
 };
 
 function cloudRoutes(claims = "claims-org-wide.json") {
@@ -64,35 +64,51 @@ function cloudRoutes(claims = "claims-org-wide.json") {
 }
 
 describe("linkAccount", () => {
-  it("checks the key with Cloud, probes the workspace, and seals the key", async () => {
+  it("checks the key with Cloud, probes the workspace, and keeps the key out of the grant", async () => {
     const { fetch, requests } = fakeFetch(cloudRoutes());
 
-    const { props } = await linkAccount(API_KEY, `https://${ENDPOINT}\n`, {
-      config,
-      encryptionKey: TEST_ENCRYPTION_KEY,
-      fetch,
-    });
+    const { identity, connection } = await linkAccount(
+      API_KEY,
+      ` https://${ENDPOINT} `,
+      {
+        config,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetch,
+      },
+    );
 
     expect(requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "POST /api/v1/auth/token",
       "GET /api/v1/nodes/-/stats",
     ]);
 
-    expect(props.workspaces).toEqual([
-      { workspaceId: "ws1", endpoint: ENDPOINT },
-    ]);
+    expect(connection).toEqual({
+      workspaceId: "ws1",
+      endpoint: ENDPOINT,
+      apiKey: API_KEY,
+    });
 
-    expect(props.organizationId).toBe("org_fixture");
+    expect(identity).toEqual({
+      accountId: await opaqueAccountId("org_fixture", "usr_fixture_1"),
+      organizationId: "org_fixture",
+      email: "operator@example.com",
+    });
+  });
 
-    expect(props.accountId).toBe(
-      await opaqueAccountId("org_fixture", "usr_fixture_1"),
+  it("takes exactly one workspace endpoint", async () => {
+    const { fetch, requests } = fakeFetch(cloudRoutes());
+
+    const deps = { config, encryptionKey: TEST_ENCRYPTION_KEY, fetch };
+
+    await expect(linkAccount(API_KEY, "  ", deps)).rejects.toThrow(
+      "Enter the workspace endpoint.",
     );
 
-    expect(JSON.stringify(props)).not.toContain(API_KEY);
+    await expect(
+      linkAccount(API_KEY, `${ENDPOINT}\nws2.us1.cloud.expanso.io:9010`, deps),
+    ).rejects.toThrow(/is not an Expanso workspace endpoint/);
 
-    expect(
-      await open(props.sealedApiKey, TEST_ENCRYPTION_KEY, props.accountId),
-    ).toBe(API_KEY);
+    expect(requests).toHaveLength(0);
   });
 
   it("refuses endpoints outside Expanso before any network call", async () => {
@@ -176,7 +192,7 @@ describe("linkAccount errors", () => {
   it("names a mistyped endpoint and shows the expected shape", async () => {
     const error = await link(API_KEY, "https://cloud.expanso.io/acme").result;
 
-    expect(error?.field).toBe("endpoints");
+    expect(error?.field).toBe("endpoint");
     expect(error?.message).toMatch(/is not an Expanso workspace endpoint/);
     expect(error?.message).toContain("cloud.expanso.io:9010");
   });
@@ -218,7 +234,7 @@ describe("linkAccount errors", () => {
       [`GET ${API}/nodes/-/stats`]: fail(404, "no route"),
     }).result;
 
-    expect(error?.field).toBe("endpoints");
+    expect(error?.field).toBe("endpoint");
     expect(error?.message).toMatch(
       /could not be read at that endpoint \(it answered HTTP 404\)/,
     );
@@ -231,7 +247,7 @@ describe("linkAccount errors", () => {
         Response.json({ total_nodes: "many" }),
     }).result;
 
-    expect(error?.field).toBe("endpoints");
+    expect(error?.field).toBe("endpoint");
     expect(error?.message).toMatch(/answered, but not in a form/);
   });
 
@@ -294,6 +310,17 @@ describe("linking page", () => {
     expect(html).toContain("full access to their workspace");
   });
 
+  it("asks for one workspace endpoint in a single-line field", () => {
+    const html = linkPage(details, "h", {
+      endpoint: "ws1.us1.cloud.expanso.io",
+    });
+
+    expect(html).toMatch(
+      /<input id="endpoint" name="endpoint" type="text" required[^>]*value="ws1\.us1\.cloud\.expanso\.io"/,
+    );
+    expect(html).not.toContain("<textarea");
+  });
+
   it("leaves the button out when no key page is configured", () => {
     expect(linkPage(details, "h")).not.toContain("Get my key");
   });
@@ -301,10 +328,10 @@ describe("linking page", () => {
   it("marks the field an error is about", () => {
     const html = linkPage(details, "h", {
       error: "bad endpoint",
-      errorField: "endpoints",
+      errorField: "endpoint",
     });
 
-    expect(html).toMatch(/id="endpoints"[^>]*aria-invalid="true"/);
+    expect(html).toMatch(/id="endpoint"[^>]*aria-invalid="true"/);
     expect(html).not.toMatch(/id="api_key"[^>]*aria-invalid/);
   });
 
@@ -553,7 +580,7 @@ describe("OAuth front door", () => {
     const response = await authorize(clientId, challenge, {
       decision: "approve",
       api_key: API_KEY,
-      endpoints: ENDPOINT,
+      endpoint: ENDPOINT,
     });
 
     expect(response.status).toBe(400);
@@ -572,7 +599,7 @@ describe("OAuth front door", () => {
     const approved = await authorize(clientId, challenge, {
       decision: "approve",
       api_key: API_KEY,
-      endpoints: ENDPOINT,
+      endpoint: ENDPOINT,
     });
 
     expect(approved.status).toBe(302);
@@ -662,19 +689,32 @@ describe("OAuth front door", () => {
         "list_executions",
         "list_jobs",
         "list_nodes",
+        "list_workspaces",
         "recent_errors",
         "search_mentions",
         "settings.read",
         "settings.update",
+        "switch_workspace",
+        "add_workspace",
+        "disconnect_workspace",
       ].sort(),
     );
 
-    // Nothing touches Expanso except to read it. settings.update only saves
-    // this plugin's own default-workspace preference.
+    // Nothing touches Expanso except to read it. These tools change only this
+    // plugin's own record of which workspaces are connected; settings.update
+    // comes from the settings helper, which sets no annotations.
+    const pluginStateTools = new Set([
+      "switch_workspace",
+      "add_workspace",
+      "disconnect_workspace",
+    ]);
+
     for (const tool of tools) {
       if (tool.name === "settings.update") continue;
 
-      expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(
+        !pluginStateTools.has(tool.name),
+      );
     }
 
     const overview = await (
@@ -707,5 +747,269 @@ describe("OAuth front door", () => {
       running: 1,
       failed: 1,
     });
+  });
+
+  const ToolTextSchema = z.object({
+    result: z.object({
+      content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+    }),
+  });
+
+  const LinkResultSchema = z.object({
+    result: z.object({ structuredContent: z.object({ url: z.string() }) }),
+  });
+
+  const ConnectionResultSchema = z.object({
+    result: z.object({
+      structuredContent: z.object({
+        connection: z.object({
+          status: z.enum(["not_connected", "reconnect"]),
+          workspaceId: z.string().optional(),
+          reconnectUrl: z.string(),
+        }),
+      }),
+    }),
+  });
+
+  const WorkspacesSchema = z.object({
+    result: z.object({
+      structuredContent: z.object({
+        workspaces: z.array(
+          z.object({
+            workspaceId: z.string(),
+            active: z.boolean(),
+            needsReconnect: z.boolean(),
+          }),
+        ),
+      }),
+    }),
+  });
+
+  /** Signs in through the whole OAuth flow and returns an MCP caller. */
+  async function signIn(endpoint = ENDPOINT) {
+    const clientId = await register();
+    const { verifier, challenge } = await pkce();
+
+    const approved = await authorize(clientId, challenge, {
+      decision: "approve",
+      api_key: API_KEY,
+      endpoint,
+    });
+
+    expect(approved.status).toBe(302);
+
+    const code =
+      new URL(approved.headers.get("Location") ?? "").searchParams.get(
+        "code",
+      ) ?? "";
+
+    const issued = await call("/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT,
+        client_id: clientId,
+        code_verifier: verifier,
+        resource: `${BASE}/mcp`,
+      }),
+    });
+
+    const { access_token: accessToken } = TokenSchema.parse(
+      await issued.json(),
+    );
+
+    let id = 0;
+
+    return async (name: string, args: Record<string, string> = {}) => {
+      id += 1;
+
+      const response = await call("/mcp", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+
+      return response.text();
+    };
+  }
+
+  const ENDPOINT_2 = "ws2.us1.cloud.expanso.io:9010";
+
+  const API_2 = `https://${ENDPOINT_2}/api/v1`;
+
+  const text = (reply: string) =>
+    ToolTextSchema.parse(JSON.parse(reply)).result.content[0].text;
+
+  /** Submits the add-workspace form behind a one-time link. */
+  async function submitLink(url: string, form: Record<string, string>) {
+    const link = new URL(url);
+
+    return call(link.pathname, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: link.searchParams.get("token") ?? "",
+        ...form,
+      }),
+    });
+  }
+
+  it("connects, switches, and disconnects workspaces, one active at a time", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch({
+        ...cloudRoutes(),
+        [`GET ${API_2}/nodes/-/stats`]: serve("node-stats.json"),
+      }).fetch,
+    );
+
+    const tool = await signIn();
+
+    const { url } = LinkResultSchema.parse(
+      JSON.parse(await tool("add_workspace")),
+    ).result.structuredContent;
+
+    const linkUrl = new URL(url);
+
+    expect(`${linkUrl.origin}${linkUrl.pathname}`).toBe(
+      `${BASE}/workspaces/add`,
+    );
+
+    const page = await call(`${linkUrl.pathname}${linkUrl.search}`);
+
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('name="endpoint"');
+
+    const connected = await submitLink(url, {
+      api_key: API_KEY,
+      endpoint: ENDPOINT_2,
+    });
+
+    expect(connected.status).toBe(200);
+    expect(await connected.text()).toContain("Workspace ws2 is connected");
+
+    // The link is spent.
+    const again = await submitLink(url, {
+      api_key: API_KEY,
+      endpoint: ENDPOINT_2,
+    });
+
+    expect(again.status).toBe(410);
+
+    const listed = () =>
+      tool("list_workspaces").then(
+        (reply: string) =>
+          WorkspacesSchema.parse(JSON.parse(reply)).result.structuredContent
+            .workspaces,
+      );
+
+    expect(
+      (await listed()).map((item) => [item.workspaceId, item.active]).sort(),
+    ).toEqual([
+      ["ws1", false],
+      ["ws2", true],
+    ]);
+
+    expect(text(await tool("switch_workspace", { workspaceId: "ws1" }))).toBe(
+      "Switched to workspace ws1. The other workspaces stay connected; nothing was revoked.",
+    );
+
+    expect(text(await tool("fleet_overview"))).toMatch(
+      /^Workspace ws1: Nodes: 2 total/,
+    );
+
+    const disconnected = text(
+      await tool("disconnect_workspace", { workspaceId: "ws1" }),
+    );
+
+    expect(disconnected).toContain("its cached key is deleted");
+    expect(disconnected).toContain(
+      "revoke it yourself on the workspace's Keys page: https://cloud.expanso.io/",
+    );
+    expect(disconnected).toContain("The active workspace is now ws2.");
+
+    expect(
+      text(await tool("disconnect_workspace", { workspaceId: "ws2" })),
+    ).toContain("No workspace is connected now");
+
+    const empty = ConnectionResultSchema.parse(
+      JSON.parse(await tool("fleet_overview")),
+    ).result.structuredContent.connection;
+
+    expect(empty.status).toBe("not_connected");
+    expect(empty.reconnectUrl).toContain(`${BASE}/workspaces/add?token=`);
+  });
+
+  it("refuses a key from another Expanso user on an add-workspace link", async () => {
+    const tool = await signIn();
+
+    const { url } = LinkResultSchema.parse(
+      JSON.parse(await tool("add_workspace")),
+    ).result.structuredContent;
+
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch(cloudRoutes("claims-other-user.json")).fetch,
+    );
+
+    const refused = await submitLink(url, {
+      api_key: API_KEY,
+      endpoint: ENDPOINT,
+    });
+
+    expect(refused.status).toBe(400);
+
+    const html = await refused.text();
+
+    expect(html).toContain("belongs to a different Expanso user");
+    expect(html).not.toContain(API_KEY);
+  });
+
+  it("asks to reconnect when Expanso Cloud stops accepting the key", async () => {
+    const tool = await signIn();
+
+    const cloud = fakeFetch({
+      ...cloudRoutes(),
+      [`POST ${CLOUD}/api/v1/auth/token`]: fail(
+        401,
+        "Invalid or expired API key",
+      ),
+    });
+
+    vi.stubGlobal("fetch", cloud.fetch);
+
+    const first = ConnectionResultSchema.parse(
+      JSON.parse(await tool("fleet.open")),
+    ).result.structuredContent.connection;
+
+    expect(first).toMatchObject({ status: "reconnect", workspaceId: "ws1" });
+    expect(first.reconnectUrl).toContain(`${BASE}/workspaces/add?token=`);
+
+    const exchanges = cloud.requests.length;
+
+    // The workspace stays marked, so Cloud is not asked again.
+    const second = ConnectionResultSchema.parse(
+      JSON.parse(await tool("list_jobs")),
+    ).result.structuredContent.connection;
+
+    expect(second.status).toBe("reconnect");
+    expect(cloud.requests).toHaveLength(exchanges);
+
+    expect(
+      WorkspacesSchema.parse(JSON.parse(await tool("list_workspaces"))).result
+        .structuredContent.workspaces,
+    ).toEqual([{ workspaceId: "ws1", active: true, needsReconnect: true }]);
   });
 });
