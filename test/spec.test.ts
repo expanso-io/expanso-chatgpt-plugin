@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JobSpec } from "../src/cloud/types.js";
+import type { JobSpec, JsonObject } from "../src/cloud/types.js";
 import {
   parseSpecText,
   REDACTED,
@@ -172,401 +172,196 @@ describe("redactForDiff", () => {
 });
 
 describe("restoreRedacted", () => {
-  it("puts current values back at the same path in objects and arrays", () => {
-    const next: JobSpec = {
-      name: "telemetry",
-      password: REDACTED,
-      config: {
-        outputs: [{ password: REDACTED, topic: "events" }, { url: "x" }],
-        tokens: [REDACTED, "fresh-token"],
-      },
-    };
-
-    expect(restoreRedacted(next, SPEC)).toEqual({
-      name: "telemetry",
-      password: "fixture-password",
-      config: {
-        outputs: [
-          { password: "fixture-output-password", topic: "events" },
-          { url: "x" },
-        ],
-        tokens: ["fixture-token-a", "fresh-token"],
-      },
-    });
+  const kafka = (brokers: string[], topic: string, password: string) => ({
+    kafka_franz: {
+      seed_brokers: brokers,
+      topic,
+      sasl: [{ mechanism: "PLAIN", username: "svc", password }],
+    },
   });
 
-  describe("a credential beside a destination", () => {
-    const current: JobSpec = {
-      name: "sink",
-      count: 2,
-      config: {
-        output: {
-          http: {
-            url: "https://ingest.corp",
-            headers: { Authorization: "Bearer real-token" },
-            batching: { count: 10 },
-          },
-        },
-      },
-    };
-
-    const edit = (http: JobSpec): JobSpec => ({
-      ...current,
-      config: { output: { http } },
-    });
-
-    it("refuses to keep it when the url beside an ancestor changed", () => {
-      expect(() =>
-        restoreRedacted(
-          edit({
-            url: "https://attacker.example",
-            headers: { Authorization: REDACTED },
-            batching: { count: 10 },
-          }),
-          current,
-        ),
-      ).toThrow(
-        "config.output.http.headers.Authorization is [redacted], but config.output.http.url changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.",
-      );
-    });
-
-    it("refuses to keep it when a url is added beside it", () => {
-      expect(() =>
-        restoreRedacted(
-          edit({
-            url: "https://ingest.corp",
-            headers: { Authorization: REDACTED, Host: "attacker.example" },
-          }),
-          current,
-        ),
-      ).toThrow(/config\.output\.http\.headers\.Host changed/);
-    });
-
-    it("keeps it when only a sibling sub-object or the spec root changed", () => {
-      const restored = restoreRedacted(
-        {
-          ...edit({
-            url: "https://ingest.corp",
-            headers: { Authorization: REDACTED },
-            batching: { count: 50 },
-          }),
-          count: 5,
-        },
-        current,
-      );
-
-      expect(restored).toEqual({
-        ...edit({
-          url: "https://ingest.corp",
-          headers: { Authorization: "Bearer real-token" },
-          batching: { count: 50 },
-        }),
-        count: 5,
-      });
-    });
+  const pipeline = (output: JsonObject, mapping = "root = this"): JobSpec => ({
+    name: "sink",
+    count: 2,
+    config: {
+      input: { http_server: { path: "/ingest" } },
+      pipeline: { processors: [{ mapping }] },
+      output,
+    },
   });
+
+  const broker = (outputs: JsonObject[]): JobSpec => ({
+    config: { output: { broker: { pattern: "fan_out", outputs } } },
+  });
+
+  const current = pipeline(kafka(["broker.corp:9092"], "events", "real-pw"));
 
   it("round-trips a redacted spec to the original", () => {
     expect(restoreRedacted(redactSpec(SPEC), SPEC)).toEqual(SPEC);
+    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
   });
 
-  it("refuses a redacted value with nothing to restore", () => {
-    expect(() => restoreRedacted({ password: REDACTED })).toThrow(SpecError);
-
-    expect(() =>
-      restoreRedacted(
-        { config: { outputs: [{}, { password: REDACTED }] } },
-        { config: { outputs: [{ url: "only-first" }] } },
+  it("keeps an unchanged component's secrets when another component is edited", () => {
+    const edited = {
+      ...pipeline(
+        kafka(["broker.corp:9092"], "events", REDACTED),
+        "root = this.lowercase()",
       ),
-    ).toThrow(/^config\.outputs\[1\] holds a \[redacted\] value/);
-  });
-
-  it("refuses a list item's credential when its topic changed", () => {
-    const current: JobSpec = {
-      outputs: [{ kafka: { topic: "events", sasl: { password: "kafka-pw" } } }],
-    };
-
-    const edited: JobSpec = {
-      outputs: [{ kafka: { topic: "alerts", sasl: { password: REDACTED } } }],
-    };
-
-    expect(() => restoreRedacted(edited, current)).toThrow(
-      "outputs[0].kafka.sasl.password is [redacted], but outputs[0].kafka.topic changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.",
-    );
-  });
-
-  it("keeps a list item's credential when another item is edited", () => {
-    const current: JobSpec = {
-      outputs: [
-        { kafka: { topic: "events", sasl: { password: "kafka-pw" } } },
-        { sql: { host: "db-1" } },
-      ],
-    };
-
-    const edited: JobSpec = {
-      outputs: [
-        { kafka: { topic: "events", sasl: { password: REDACTED } } },
-        { sql: { host: "db-2" } },
-      ],
+      count: 5,
     };
 
     expect(restoreRedacted(edited, current)).toEqual({
-      outputs: [
-        { kafka: { topic: "events", sasl: { password: "kafka-pw" } } },
-        { sql: { host: "db-2" } },
-      ],
+      ...pipeline(
+        kafka(["broker.corp:9092"], "events", "real-pw"),
+        "root = this.lowercase()",
+      ),
+      count: 5,
     });
   });
 
-  it("refuses a labelled item's credential when its url changed", () => {
-    const current: JobSpec = {
-      outputs: [
-        {
-          label: "a",
-          http: {
-            url: "https://ingest.corp",
-            headers: { Authorization: "Bearer real" },
-          },
-        },
-      ],
-    };
-
-    const edited: JobSpec = {
-      outputs: [
-        {
-          label: "a",
-          http: {
-            url: "https://attacker.example",
-            headers: { Authorization: REDACTED },
-          },
-        },
-      ],
-    };
-
-    expect(() => restoreRedacted(edited, current)).toThrow(
-      /^outputs\[0\]\.http\.headers\.Authorization is \[redacted\], but outputs\[0\]\.http\.url changed/,
+  it("refuses a kept secret when the component's brokers changed", () => {
+    expect(() =>
+      restoreRedacted(
+        pipeline(kafka(["evil:9092"], "events", REDACTED)),
+        current,
+      ),
+    ).toThrow(
+      "config.output.kafka_franz holds a [redacted] value, but other fields in config.output.kafka_franz changed, so its secrets could go somewhere new. Put the real secrets for config.output.kafka_franz in the spec.",
     );
   });
 
-  it("refuses the only item of a type when its url changed", () => {
-    const current: JobSpec = {
-      outputs: [
-        { http: { url: "https://ingest.corp", password: "pw" } },
-        { sql: { host: "db-1" } },
-      ],
-    };
+  it("refuses a kept secret when any other field of its component changed", () => {
+    expect(() =>
+      restoreRedacted(
+        pipeline(kafka(["broker.corp:9092"], "alerts", REDACTED)),
+        current,
+      ),
+    ).toThrow(/^config\.output\.kafka_franz holds a \[redacted\] value/);
 
-    const edited: JobSpec = {
-      outputs: [
-        { sql: { host: "db-1" } },
-        { http: { url: "https://attacker.example", password: REDACTED } },
-      ],
-    };
-
-    expect(() => restoreRedacted(edited, current)).toThrow(
-      /outputs\[1\]\.http\.url changed/,
-    );
-  });
-
-  it("refuses to swap credentials between reordered items of one type", () => {
-    const current: JobSpec = {
-      outputs: [
-        { http: { url: "https://a.example.com", password: "pw-a" } },
-        { http: { url: "https://b.example.com", password: "pw-b" } },
-      ],
-    };
-
-    const reordered: JobSpec = {
-      outputs: [
-        { http: { url: "https://b.example.com", password: REDACTED } },
-        { http: { url: "https://a.example.com", password: REDACTED } },
-      ],
-    };
-
-    expect(() => restoreRedacted(reordered, current)).toThrow(
-      /^outputs\[0\] holds a \[redacted\] value.*name or label/,
-    );
-
-    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
-  });
-
-  it("refuses to swap a redacted basic_auth block between reordered outputs", () => {
-    const output = (url: string, password: string) => ({
-      http_client: { url, basic_auth: { username: "svc", password } },
-    });
-
-    const current: JobSpec = {
-      outputs: [
-        output("https://a.example.com", "pw-a"),
-        output("https://b.example.com", "pw-b"),
-      ],
-    };
-
-    const shown = (url: string) => ({
+    const http = (count: number, authorization: string) => ({
       http_client: {
-        url,
-        basic_auth: { username: REDACTED, password: REDACTED },
+        url: "https://ingest.corp",
+        headers: { Authorization: authorization },
+        batching: { count },
       },
-    });
-
-    expect(redactSpec(current)).toEqual({
-      outputs: [shown("https://a.example.com"), shown("https://b.example.com")],
-    });
-
-    const reordered: JobSpec = {
-      outputs: [shown("https://b.example.com"), shown("https://a.example.com")],
-    };
-
-    expect(() => restoreRedacted(reordered, current)).toThrow(
-      /^outputs\[0\] holds a \[redacted\] value/,
-    );
-
-    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
-  });
-
-  it("refuses to swap a redacted sasl block between reordered kafka outputs", () => {
-    const output = (broker: string, password: string) => ({
-      kafka: {
-        addresses: [broker],
-        topic: "events",
-        sasl: { mechanism: "PLAIN", user: "svc", password },
-      },
-    });
-
-    const current: JobSpec = {
-      outputs: [output("kafka-a:9092", "pw-a"), output("kafka-b:9092", "pw-b")],
-    };
-
-    const shown = (broker: string) => ({
-      kafka: {
-        addresses: [broker],
-        topic: "events",
-        sasl: { mechanism: REDACTED, user: REDACTED, password: REDACTED },
-      },
-    });
-
-    expect(redactSpec(current)).toEqual({
-      outputs: [shown("kafka-a:9092"), shown("kafka-b:9092")],
     });
 
     expect(() =>
       restoreRedacted(
-        { outputs: [shown("kafka-b:9092"), shown("kafka-a:9092")] },
-        current,
+        pipeline(http(50, REDACTED)),
+        pipeline(http(10, "Bearer real")),
       ),
-    ).toThrow(/^outputs\[0\] holds a \[redacted\] value/);
-
-    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
   });
 
-  it("refuses a same-type item whose secrets have nothing visible beside them", () => {
-    const current: JobSpec = {
-      outputs: [{ http: { password: "pw-a" } }, { http: { password: "pw-b" } }],
-    };
+  it("does not let secret values decide whether a component changed", () => {
+    const sql = (password: string, token: string) =>
+      pipeline({ sql: { host: "db-1", password, token } });
 
-    expect(() => restoreRedacted(redactSpec(current), current)).toThrow(
-      /^outputs\[0\] holds a \[redacted\] value/,
+    expect(
+      restoreRedacted(sql(REDACTED, "new-token"), sql("real-pw", "old-token")),
+    ).toEqual(sql("real-pw", "new-token"));
+  });
+
+  it("keeps a top-level secret outside config", () => {
+    expect(
+      restoreRedacted(
+        { name: "renamed", password: REDACTED },
+        { name: "p", password: "real" },
+      ),
+    ).toEqual({ name: "renamed", password: "real" });
+  });
+
+  it("refuses a redacted value with nothing to restore", () => {
+    expect(() => restoreRedacted({ password: REDACTED })).toThrow(
+      "password holds a [redacted] value, but the job has no password to keep it from. Put the real value in the spec, or leave the field out.",
+    );
+
+    expect(() =>
+      restoreRedacted(
+        { config: { output: { sql: { password: REDACTED } } } },
+        { config: { output: { http: { url: "x" } } } },
+      ),
+    ).toThrow(/^config\.output\.sql holds a \[redacted\] value/);
+  });
+
+  it("follows labelled items of one type to wherever they moved", () => {
+    const output = (label: string, url: string, password: string) => ({
+      label,
+      http: { url, password },
+    });
+
+    expect(
+      restoreRedacted(
+        broker([
+          output("b", "https://b.example.com", REDACTED),
+          output("a", "https://a.example.com", REDACTED),
+        ]),
+        broker([
+          output("a", "https://a.example.com", "pw-a"),
+          output("b", "https://b.example.com", "pw-b"),
+        ]),
+      ),
+    ).toEqual(
+      broker([
+        output("b", "https://b.example.com", "pw-b"),
+        output("a", "https://a.example.com", "pw-a"),
+      ]),
+    );
+
+    expect(() =>
+      restoreRedacted(
+        broker([output("a", "https://attacker.example", REDACTED)]),
+        broker([output("a", "https://a.example.com", "pw-a")]),
+      ),
+    ).toThrow(
+      /^config\.output\.broker\.outputs\[0\] holds a \[redacted\] value, but other fields/,
     );
   });
 
   it("follows the only item of a type to wherever it moved", () => {
-    const current: JobSpec = {
-      outputs: [
-        { kafka: { topic: "events", password: "kafka-pw" } },
-        { sql: { host: "db-1", password: "sql-pw" } },
-      ],
-    };
+    const sql = (password: string) => ({ sql: { host: "db-1", password } });
 
-    const reordered: JobSpec = {
-      outputs: [
-        { sql: { host: "db-1", password: REDACTED } },
-        { kafka: { topic: "events", password: REDACTED } },
-      ],
-    };
-
-    expect(restoreRedacted(reordered, current)).toEqual({
-      outputs: [
-        { sql: { host: "db-1", password: "sql-pw" } },
-        { kafka: { topic: "events", password: "kafka-pw" } },
-      ],
-    });
+    expect(
+      restoreRedacted(
+        broker([sql(REDACTED), kafka(["k:9092"], "events", REDACTED)]),
+        broker([kafka(["k:9092"], "events", "kafka-pw"), sql("sql-pw")]),
+      ),
+    ).toEqual(broker([sql("sql-pw"), kafka(["k:9092"], "events", "kafka-pw")]));
   });
 
-  it("follows labelled items of one type to wherever they moved", () => {
-    const current: JobSpec = {
-      outputs: [
-        {
-          label: "a",
-          http: { url: "https://a.example.com", password: "pw-a" },
-        },
-        {
-          label: "b",
-          http: { url: "https://b.example.com", password: "pw-b" },
-        },
-      ],
-    };
-
-    const reordered: JobSpec = {
-      outputs: [
-        {
-          label: "b",
-          http: { url: "https://b.example.com", password: REDACTED },
-        },
-        {
-          label: "a",
-          http: { url: "https://a.example.com", password: REDACTED },
-        },
-      ],
-    };
-
-    expect(restoreRedacted(reordered, current)).toEqual({
-      outputs: [
-        {
-          label: "b",
-          http: { url: "https://b.example.com", password: "pw-b" },
-        },
-        {
-          label: "a",
-          http: { url: "https://a.example.com", password: "pw-a" },
-        },
-      ],
+  it("refuses to swap credentials between reordered items of one type", () => {
+    const http = (url: string, password: string) => ({
+      http: { url, password },
     });
-  });
 
-  it("follows a named list item to wherever it moved", () => {
-    const current: JobSpec = {
-      outputs: [
-        { name: "a", http: { url: "https://a.example.com", password: "pw-a" } },
-        { name: "b", http: { url: "https://b.example.com", password: "pw-b" } },
-      ],
-    };
-
-    const reordered: JobSpec = {
-      outputs: [
-        {
-          name: "b",
-          http: { url: "https://b.example.com", password: REDACTED },
-        },
-        {
-          name: "a",
-          http: { url: "https://a.example.com", password: REDACTED },
-        },
-      ],
-    };
-
-    expect(restoreRedacted(reordered, current)).toEqual({
-      outputs: [
-        { name: "b", http: { url: "https://b.example.com", password: "pw-b" } },
-        { name: "a", http: { url: "https://a.example.com", password: "pw-a" } },
-      ],
-    });
+    const original = broker([
+      http("https://a.example.com", "pw-a"),
+      http("https://b.example.com", "pw-b"),
+    ]);
 
     expect(() =>
       restoreRedacted(
-        { outputs: [{ name: "c", http: { password: REDACTED } }] },
-        current,
+        broker([
+          http("https://b.example.com", REDACTED),
+          http("https://a.example.com", REDACTED),
+        ]),
+        original,
       ),
-    ).toThrow(/^outputs\[0\] holds a \[redacted\] value/);
+    ).toThrow(/^config\.output\.broker\.outputs\[0\] holds a \[redacted\]/);
+
+    expect(restoreRedacted(redactSpec(original), original)).toEqual(original);
+  });
+
+  it("refuses a named item that is not in the current list", () => {
+    expect(() =>
+      restoreRedacted(
+        broker([{ name: "c", http: { password: REDACTED } }]),
+        broker([{ name: "a", http: { password: "pw-a" } }]),
+      ),
+    ).toThrow(
+      /^config\.output\.broker\.outputs\[0\] holds a \[redacted\] value, but it no longer matches/,
+    );
   });
 
   it("refuses when the current value is itself the placeholder", () => {

@@ -274,7 +274,7 @@ config:
     await expect(
       previewChange(ctx, { action: "deploy_job", jobId: "job-1", spec }),
     ).rejects.toThrow(
-      /config\.output\.sql\.password is \[redacted\], but config\.output\.sql\.host changed/,
+      /config\.output\.sql holds a \[redacted\] value, but other fields in config\.output\.sql changed/,
     );
 
     expect(writes()).toHaveLength(0);
@@ -319,7 +319,9 @@ config:
         action: "deploy_job",
         spec: `name: fresh\nconfig: { output: { sql: { password: "[redacted]" } } }`,
       }),
-    ).rejects.toThrow(/config\.output\.sql\.password is \[redacted\]/);
+    ).rejects.toThrow(
+      /config\.output\.sql holds a \[redacted\] value, but the job has no config\.output\.sql/,
+    );
 
     expect(writes()).toHaveLength(0);
   });

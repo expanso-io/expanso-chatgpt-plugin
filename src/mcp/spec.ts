@@ -144,111 +144,162 @@ function fnv1a(text: string): string {
 }
 
 /**
+ * Which parts of a spec are components: a key names a part to walk into, or
+ * "list" for a list whose items are each a component. Any other key under a
+ * walked part is a component in itself.
+ */
+interface Layout {
+  [key: string]: Layout | "list";
+}
+
+const ROUTER: Layout = { inputs: "list", outputs: "list", cases: "list" };
+
+const ENDPOINT: Layout = { broker: ROUTER, switch: ROUTER };
+
+const SPEC_LAYOUT: Layout = {
+  config: {
+    input: ENDPOINT,
+    output: ENDPOINT,
+    pipeline: { processors: "list" },
+    cache_resources: "list",
+    rate_limit_resources: "list",
+    input_resources: "list",
+    output_resources: "list",
+    processor_resources: "list",
+  },
+};
+
+/**
  * Replaces every REDACTED in `next` with the value at the same path in
- * `current`. A REDACTED with nothing to restore is an error: the spec would
- * otherwise deploy the placeholder itself. So is one whose surroundings
- * changed: a scalar beside it, or beside an ancestor below the spec root
- * (a url, host, or topic), that differs from `current` would send the kept
- * secret somewhere new. The chain starts again at each list item, compared
- * with the current item it was matched to.
+ * `current`. A secret is kept only when the component holding it (an input,
+ * output, processor, cache, or resource; outside config, the top-level field)
+ * is identical to the current one once credentials are masked. Any other
+ * change to that component could send the secret somewhere new, so its
+ * secrets must be entered again.
  */
 export function restoreRedacted(next: JobSpec, current?: JobSpec): JobSpec {
-  return restoreObject(next, current, "");
+  return restoreParts(next, current, "", SPEC_LAYOUT);
 }
 
-function restoreObject(
-  next: JobSpec,
-  current: JobSpec | undefined,
-  path: string,
-  changed?: string,
-): JobSpec {
-  const moved =
-    changed ?? (path ? changedScalar(next, current, path) : undefined);
-
-  return Object.fromEntries(
-    Object.entries(next).map(([name, item]) => [
-      name,
-      restoreAt(item, current?.[name], path ? `${path}.${name}` : name, moved),
-    ]),
-  );
-}
-
-/** The path of the first scalar in `next` that differs from `current`. */
-function changedScalar(
-  next: JobSpec,
-  current: JobSpec | undefined,
-  path: string,
-): string | undefined {
-  const entry = Object.entries(next).find(
-    ([name, value]) =>
-      isScalar(value) &&
-      (current?.[name] === undefined ||
-        canonicalJson(value) !== canonicalJson(current[name])),
-  );
-
-  return entry && `${path}.${entry[0]}`;
-}
-
-function isScalar(value: JsonValue): boolean {
-  if (isJsonArray(value)) return value.every(isScalar);
-
-  return !isJsonObject(value) && value !== REDACTED;
-}
-
-function restoreAt(
-  value: JsonValue,
+function restoreParts(
+  next: JsonObject,
   current: JsonValue | undefined,
   path: string,
-  changed?: string,
+  layout: Layout,
+): JsonObject {
+  const before: JsonObject = isJsonObject(current) ? current : {};
+
+  return Object.fromEntries(
+    Object.entries(next).map(([name, value]) => {
+      const at = path ? `${path}.${name}` : name;
+      const inner = Object.hasOwn(layout, name) ? layout[name] : undefined;
+
+      if (inner === "list" && isJsonArray(value)) {
+        return [name, restoreList(value, before[name], at)];
+      }
+
+      if (inner !== undefined && inner !== "list" && isJsonObject(value)) {
+        return [name, restoreParts(value, before[name], at, inner)];
+      }
+
+      return [
+        name,
+        restoreComponent(value, before[name], at, SECRET_KEY.test(name)),
+      ];
+    }),
+  );
+}
+
+function restoreList(
+  next: JsonValue[],
+  current: JsonValue | undefined,
+  path: string,
+): JsonValue[] {
+  const items = isJsonArray(current) ? current : [];
+
+  return next.map((item, index) => {
+    const at = `${path}[${index}]`;
+
+    return hasPlaceholder(item)
+      ? restoreComponent(
+          item,
+          matchingItem(item, index, next, items, at),
+          at,
+          false,
+        )
+      : item;
+  });
+}
+
+function restoreComponent(
+  next: JsonValue,
+  current: JsonValue | undefined,
+  path: string,
+  secret: boolean,
 ): JsonValue {
-  if (value === REDACTED) {
+  if (!hasPlaceholder(next)) return next;
+
+  if (current === undefined) {
+    throw new SpecError(
+      `${path} holds a ${REDACTED} value, but the job has no ${path} to keep it from. Put the real value in the spec, or leave the field out.`,
+    );
+  }
+
+  const mask = (value: JsonValue) =>
+    canonicalJson(redactAt(value, secret, () => REDACTED));
+
+  if (mask(next) !== mask(current)) {
+    throw new SpecError(
+      `${path} holds a ${REDACTED} value, but other fields in ${path} changed, so its secrets could go somewhere new. Put the real secrets for ${path} in the spec.`,
+    );
+  }
+
+  return fill(next, current, path);
+}
+
+/** Puts back each REDACTED from a current value of the same shape. */
+function fill(
+  next: JsonValue,
+  current: JsonValue | undefined,
+  path: string,
+): JsonValue {
+  if (next === REDACTED) {
     if (current === undefined || current === REDACTED) {
       throw new SpecError(
         `${path} is ${REDACTED}, but the job has no matching value there to keep. Put the real value in the spec, or leave the field out.`,
       );
     }
 
-    if (changed !== undefined) {
-      throw new SpecError(
-        `${path} is ${REDACTED}, but ${changed} changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.`,
-      );
-    }
-
     return current;
   }
 
-  if (isJsonArray(value)) {
+  if (isJsonArray(next)) {
     const items = isJsonArray(current) ? current : [];
 
-    return value.map((item, index) => {
-      const itemPath = `${path}[${index}]`;
-
-      return restoreAt(
-        item,
-        matchingItem(item, index, value, items, itemPath),
-        itemPath,
-        isJsonObject(item) ? undefined : changed,
-      );
-    });
-  }
-
-  if (isJsonObject(value)) {
-    return restoreObject(
-      value,
-      isJsonObject(current) ? current : undefined,
-      path,
-      changed,
+    return next.map((item, index) =>
+      fill(item, items[index], `${path}[${index}]`),
     );
   }
 
-  return value;
+  if (isJsonObject(next)) {
+    const before: JsonObject = isJsonObject(current) ? current : {};
+
+    return Object.fromEntries(
+      Object.entries(next).map(([name, value]) => [
+        name,
+        fill(value, before[name], `${path}.${name}`),
+      ]),
+    );
+  }
+
+  return next;
 }
 
 /**
  * The current list item an edited one with placeholders stands for: the item
  * with the same name or label; else the only item of its component type
- * (kafka, sql, ...); else the same-type item at its position, provided every
- * value beside a placeholder is unchanged. Anything else is refused.
+ * (kafka, sql, ...); else the same-type item at its position. Anything else
+ * is refused.
  */
 function matchingItem(
   item: JsonValue,
@@ -258,8 +309,6 @@ function matchingItem(
   path: string,
 ): JsonValue | undefined {
   if (!isJsonObject(item)) return items[index];
-
-  if (!hasPlaceholder(item)) return undefined;
 
   const identity = itemIdentity(item);
 
@@ -300,57 +349,9 @@ function samePlace(
   item: JsonObject,
   current: JsonValue | undefined,
 ): JsonValue | undefined {
-  return isJsonObject(current) &&
-    componentKeys(current) === componentKeys(item) &&
-    placeholdersGuarded(item, current, false)
+  return isJsonObject(current) && componentKeys(current) === componentKeys(item)
     ? current
     : undefined;
-}
-
-/**
- * Whether every placeholder has at least one visible value beside it or
- * beside one of its ancestors within the item, and every such value is
- * unchanged from the current item.
- */
-function placeholdersGuarded(
-  next: JsonValue,
-  current: JsonValue | undefined,
-  guarded: boolean,
-): boolean {
-  if (next === REDACTED) return guarded;
-
-  if (!hasPlaceholder(next)) return true;
-
-  if (isJsonArray(next)) {
-    return next.every((item, index) =>
-      placeholdersGuarded(
-        item,
-        isJsonArray(current) ? current[index] : undefined,
-        guarded,
-      ),
-    );
-  }
-
-  if (!isJsonObject(next)) return true;
-
-  const before: JsonObject = isJsonObject(current) ? current : {};
-  const entries = Object.entries(next);
-  const visible = entries.filter(([, value]) => !hasPlaceholder(value));
-
-  const unchanged = visible.every(([key, value]) => {
-    const old = before[key];
-
-    return old !== undefined && canonicalJson(value) === canonicalJson(old);
-  });
-
-  const here = guarded || visible.length > 0;
-
-  return (
-    unchanged &&
-    entries.every(([key, value]) =>
-      placeholdersGuarded(value, before[key], here),
-    )
-  );
 }
 
 function hasPlaceholder(value: JsonValue): boolean {
