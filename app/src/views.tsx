@@ -255,10 +255,10 @@ export function DashboardPanel({
     <div className="dashboard">
       <dl className="stats">
         <div>
-          <dt>Nodes online</dt>
+          <dt>Average CPU</dt>
           <dd>
-            {value.nodes.online}
-            <small>/{value.nodes.total}</small>
+            {value.nodes.resources?.cpu.avg ?? "–"}
+            <small>%</small>
           </dd>
         </div>
         <div>
