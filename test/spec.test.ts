@@ -27,7 +27,10 @@ const SPEC: JobSpec = {
     },
     outputs: [
       { password: "fixture-output-password", topic: "events" },
-      { url: "https://operator:fixture-url-pass@broker.example.com/queue" },
+      {
+        queue: "audit",
+        url: "https://operator:fixture-url-pass@broker.example.com/queue",
+      },
       { url: "postgres://operator@db.example.com/metrics" },
     ],
     tokens: ["fixture-token-a", "fixture-token-b"],
@@ -112,7 +115,7 @@ describe("redactSpec", () => {
       },
       outputs: [
         { password: REDACTED, topic: "events" },
-        { url: REDACTED },
+        { queue: "audit", url: REDACTED },
         { url: "postgres://operator@db.example.com/metrics" },
       ],
       tokens: [REDACTED, REDACTED],
@@ -241,6 +244,85 @@ describe("restoreRedacted", () => {
     );
 
     expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+  });
+
+  it("refuses to swap a redacted basic_auth block between reordered outputs", () => {
+    const output = (url: string, password: string) => ({
+      http_client: { url, basic_auth: { username: "svc", password } },
+    });
+
+    const current: JobSpec = {
+      outputs: [
+        output("https://a.example.com", "pw-a"),
+        output("https://b.example.com", "pw-b"),
+      ],
+    };
+
+    const shown = (url: string) => ({
+      http_client: {
+        url,
+        basic_auth: { username: REDACTED, password: REDACTED },
+      },
+    });
+
+    expect(redactSpec(current)).toEqual({
+      outputs: [shown("https://a.example.com"), shown("https://b.example.com")],
+    });
+
+    const reordered: JobSpec = {
+      outputs: [shown("https://b.example.com"), shown("https://a.example.com")],
+    };
+
+    expect(() => restoreRedacted(reordered, current)).toThrow(
+      /^outputs\[0\] holds a \[redacted\] value/,
+    );
+
+    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+  });
+
+  it("refuses to swap a redacted sasl block between reordered kafka outputs", () => {
+    const output = (broker: string, password: string) => ({
+      kafka: {
+        addresses: [broker],
+        topic: "events",
+        sasl: { mechanism: "PLAIN", user: "svc", password },
+      },
+    });
+
+    const current: JobSpec = {
+      outputs: [output("kafka-a:9092", "pw-a"), output("kafka-b:9092", "pw-b")],
+    };
+
+    const shown = (broker: string) => ({
+      kafka: {
+        addresses: [broker],
+        topic: "events",
+        sasl: { mechanism: REDACTED, user: REDACTED, password: REDACTED },
+      },
+    });
+
+    expect(redactSpec(current)).toEqual({
+      outputs: [shown("kafka-a:9092"), shown("kafka-b:9092")],
+    });
+
+    expect(() =>
+      restoreRedacted(
+        { outputs: [shown("kafka-b:9092"), shown("kafka-a:9092")] },
+        current,
+      ),
+    ).toThrow(/^outputs\[0\] holds a \[redacted\] value/);
+
+    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+  });
+
+  it("refuses a same-type item whose secrets have nothing visible beside them", () => {
+    const current: JobSpec = {
+      outputs: [{ http: { password: "pw-a" } }, { http: { password: "pw-b" } }],
+    };
+
+    expect(() => restoreRedacted(redactSpec(current), current)).toThrow(
+      /^outputs\[0\] holds a \[redacted\] value/,
+    );
   });
 
   it("follows the only item of a type to wherever it moved", () => {

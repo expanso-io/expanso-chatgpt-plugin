@@ -9,6 +9,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../cloud/types.js";
+import { canonicalJson } from "./confirm.js";
 
 // Job specs cross the chat boundary in both directions. On the way out,
 // values that look like credentials are replaced with REDACTED so they never
@@ -262,21 +263,31 @@ function samePlace(
 ): JsonValue | undefined {
   return isJsonObject(current) &&
     componentKeys(current) === componentKeys(item) &&
-    besidePlaceholdersUnchanged(item, current)
+    placeholdersGuarded(item, current, false)
     ? current
     : undefined;
 }
 
-/** Whether every scalar next to a placeholder still equals the current value. */
-function besidePlaceholdersUnchanged(
+/**
+ * Whether every placeholder has at least one visible value beside it or
+ * beside one of its ancestors within the item, and every such value is
+ * unchanged from the current item.
+ */
+function placeholdersGuarded(
   next: JsonValue,
   current: JsonValue | undefined,
+  guarded: boolean,
 ): boolean {
+  if (next === REDACTED) return guarded;
+
+  if (!hasPlaceholder(next)) return true;
+
   if (isJsonArray(next)) {
     return next.every((item, index) =>
-      besidePlaceholdersUnchanged(
+      placeholdersGuarded(
         item,
         isJsonArray(current) ? current[index] : undefined,
+        guarded,
       ),
     );
   }
@@ -285,12 +296,21 @@ function besidePlaceholdersUnchanged(
 
   const before: JsonObject = isJsonObject(current) ? current : {};
   const entries = Object.entries(next);
-  const guarded = entries.some(([, value]) => value === REDACTED);
+  const visible = entries.filter(([, value]) => !hasPlaceholder(value));
 
-  return entries.every(([key, value]) =>
-    isJsonArray(value) || isJsonObject(value)
-      ? besidePlaceholdersUnchanged(value, before[key])
-      : !guarded || value === REDACTED || value === before[key],
+  const unchanged = visible.every(([key, value]) => {
+    const old = before[key];
+
+    return old !== undefined && canonicalJson(value) === canonicalJson(old);
+  });
+
+  const here = guarded || visible.length > 0;
+
+  return (
+    unchanged &&
+    entries.every(([key, value]) =>
+      placeholdersGuarded(value, before[key], here),
+    )
   );
 }
 
