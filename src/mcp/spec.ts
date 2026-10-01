@@ -26,6 +26,9 @@ const SECRET_KEY =
 /** A URL carrying user:password credentials. */
 const URL_CREDENTIALS = /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i;
 
+/** A whole value that only names an environment variable the edge node fills in. */
+const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
 /** Limits what a pasted spec may be, before anything parses it deeply. */
 const MAX_SPEC_CHARS = 200_000;
 
@@ -124,6 +127,8 @@ function redactAt(
 
   if (value === null || value === "") return value;
 
+  if (ENV_REFERENCE.test(jsonText(value) ?? "")) return value;
+
   if (secret) return marker(value);
 
   if (URL_CREDENTIALS.test(jsonText(value) ?? "")) return marker(value);
@@ -175,11 +180,28 @@ const SPEC_LAYOUT: Layout = {
  * output, processor, cache, or resource; outside config, the top-level field)
  * is identical to the current one apart from its REDACTED placeholders. Any
  * other change to that component, a new credential included, could send the
- * secret somewhere new, so its secrets must be entered again.
+ * secret somewhere new. Secrets never go through chat, so a refusal points at
+ * Expanso Cloud's job editor (`consoleUrl`) or an environment variable
+ * reference instead.
  */
-export function restoreRedacted(next: JobSpec, current?: JobSpec): JobSpec {
-  return restoreParts(next, current, "", SPEC_LAYOUT);
+export function restoreRedacted(
+  next: JobSpec,
+  current: JobSpec | undefined,
+  consoleUrl: string,
+): JobSpec {
+  try {
+    return restoreParts(next, current, "", SPEC_LAYOUT);
+  } catch (error) {
+    if (!(error instanceof SecretRefused)) throw error;
+
+    throw new SpecError(
+      `${error.message} Secrets never go through chat. Make this change in Expanso Cloud's job editor (${consoleUrl}), or replace the secret with an environment variable reference such as \${VAR_NAME}, which the edge node fills in.`,
+    );
+  }
 }
+
+/** Why a saved secret cannot be kept; restoreRedacted adds the remedy. */
+class SecretRefused extends Error {}
 
 function restoreParts(
   next: JsonObject,
@@ -231,14 +253,14 @@ function restoreComponent(
   if (!hasPlaceholder(next)) return next;
 
   if (current === undefined) {
-    throw new SpecError(
-      `${path} holds a ${REDACTED} value, but the job has no ${path} to keep it from. Put the real value in the spec, or leave the field out.`,
+    throw new SecretRefused(
+      `${path} holds a ${REDACTED} value, but the job has no saved ${path} to keep it from.`,
     );
   }
 
   if (!sameApartFromPlaceholders(next, current)) {
-    throw new SpecError(
-      `${path} holds a ${REDACTED} value, but other fields in ${path} changed, so its secrets could go somewhere new. Put the real secrets for ${path} in the spec.`,
+    throw new SecretRefused(
+      `${path} holds a saved secret, and other fields in ${path} changed, so the secret could go somewhere new.`,
     );
   }
 
@@ -288,8 +310,8 @@ function fill(
 ): JsonValue {
   if (next === REDACTED) {
     if (current === undefined || current === REDACTED) {
-      throw new SpecError(
-        `${path} is ${REDACTED}, but the job has no matching value there to keep. Put the real value in the spec, or leave the field out.`,
+      throw new SecretRefused(
+        `${path} is ${REDACTED}, but the job has no saved value there to keep.`,
       );
     }
 
@@ -344,8 +366,8 @@ function matchingItem(
       : (onlyOfType(item, edited, items) ?? samePlace(item, items[index]));
 
   if (match === undefined) {
-    throw new SpecError(
-      `${path} holds a ${REDACTED} value, but it no longer matches one item in the job's current list. Put the real value in the spec, or give the item a name or label.`,
+    throw new SecretRefused(
+      `${path} holds a ${REDACTED} value, but it no longer matches one item in the job's current list; a name or label on each item tells them apart.`,
     );
   }
 

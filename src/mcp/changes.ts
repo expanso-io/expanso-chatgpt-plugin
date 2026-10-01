@@ -114,6 +114,8 @@ type ChangeClient = Pick<
 export interface ChangeContext {
   client: ChangeClient;
   workspaceId: string;
+  /** Expanso Cloud's console, where saved secrets can be edited. */
+  consoleUrl: string;
   sign: (plan: SignedPlan) => Promise<string>;
   verify: (token: string, plan: SignedPlan) => Promise<void>;
 }
@@ -189,7 +191,7 @@ async function previewDeploy(
     ? await ctx.client.getJobSpec(jobId)
     : await findJobByName(ctx.client, name!);
 
-  const merged = restoreRedacted(given, existing?.spec);
+  const merged = restoreRedacted(given, existing?.spec, ctx.consoleUrl);
   const jobName = specName(merged) ?? existing?.id ?? "";
 
   const dryRun = await explain(
@@ -581,8 +583,8 @@ export async function applyChange(
     const given = parseSpecText(jsonText(args.spec) ?? "");
 
     const result = jobId
-      ? await deployOver(ctx.client, jobId, given, args.baseFingerprint)
-      : await createJob(ctx.client, given);
+      ? await deployOver(ctx, jobId, given, args.baseFingerprint)
+      : await createJob(ctx, given);
 
     const job = jobView(result.job ?? {});
 
@@ -645,30 +647,33 @@ export async function applyChange(
 }
 
 /** Creates a job after checking no job of that name appeared since the preview. */
-async function createJob(client: ChangeClient, given: JobSpec) {
+async function createJob(ctx: ChangeContext, given: JobSpec) {
   const name = specName(given);
 
-  if (name && (await findJobByName(client, name))) {
+  if (name && (await findJobByName(ctx.client, name))) {
     throw new PlanError(
       `A job named ${name} now exists. Preview the change again.`,
     );
   }
 
-  return client.putJob(restoreRedacted(given, undefined));
+  return ctx.client.putJob(restoreRedacted(given, undefined, ctx.consoleUrl));
 }
 
 /** Updates a job by ID after checking it still matches the preview. */
 async function deployOver(
-  client: ChangeClient,
+  ctx: ChangeContext,
   jobId: string,
   given: JobSpec,
   baseFingerprint: JsonValue | undefined,
 ) {
-  const current = await client.getJobSpec(jobId);
+  const current = await ctx.client.getJobSpec(jobId);
 
   await assertUnchanged(current.spec, baseFingerprint);
 
-  return client.putJobById(jobId, restoreRedacted(given, current.spec));
+  return ctx.client.putJobById(
+    jobId,
+    restoreRedacted(given, current.spec, ctx.consoleUrl),
+  );
 }
 
 async function assertUnchanged(spec: JobSpec, expected: JsonValue | undefined) {

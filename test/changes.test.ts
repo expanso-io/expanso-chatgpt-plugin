@@ -79,6 +79,7 @@ function setup(routes: Record<string, Route>, account = ACCOUNT) {
   const ctx: ChangeContext = {
     client: new WorkspaceClient(ENDPOINT, "token-fixture", fetch),
     workspaceId: "ws1",
+    consoleUrl: "https://console.test",
     sign: (plan) => signPlan(TEST_ENCRYPTION_KEY, account, plan),
     verify: (token, plan) =>
       verifyPlan(TEST_ENCRYPTION_KEY, ACCOUNT, token, plan),
@@ -274,7 +275,7 @@ config:
     await expect(
       previewChange(ctx, { action: "deploy_job", jobId: "job-1", spec }),
     ).rejects.toThrow(
-      /config\.output\.sql holds a \[redacted\] value, but other fields in config\.output\.sql changed/,
+      /config\.output\.sql holds a saved secret, and other fields in config\.output\.sql changed/,
     );
 
     expect(writes()).toHaveLength(0);
@@ -320,7 +321,7 @@ config:
         spec: `name: fresh\nconfig: { output: { sql: { password: "[redacted]" } } }`,
       }),
     ).rejects.toThrow(
-      /config\.output\.sql holds a \[redacted\] value, but the job has no config\.output\.sql/,
+      /config\.output\.sql holds a \[redacted\] value, but the job has no saved config\.output\.sql/,
     );
 
     expect(writes()).toHaveLength(0);

@@ -192,6 +192,7 @@ async function withWorkspace(
     {
       client: session.client,
       workspaceId: active,
+      consoleUrl: account.consoleUrl,
       sign: (plan) => account.signPlan(plan),
       verify: (token, plan) => account.verifyPlan(token, plan),
     },

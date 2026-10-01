@@ -65,8 +65,13 @@ Actions:
   change (`config`, `selector`, `description`, or `name`). For larger edits,
   read the spec with `get_job_spec`, change it, and preview `deploy_job` with
   `jobId` and the whole `spec`. Values shown as `[redacted]` are credentials:
-  leave them as `[redacted]` to keep them. Never ask the user to paste a
-  credential into chat.
+  leave them as `[redacted]` to keep them. A value like `${DB_PASS}` is an
+  environment variable reference, not a secret; edit around it freely.
+- Secrets never go through chat. Never ask the user for a secret, and never
+  put one in a spec. If a preview refuses because a component holds a saved
+  secret, explain that and stop: the user can make that change in Expanso
+  Cloud's job editor (the link in the refusal), or switch the secret to a
+  `${VAR_NAME}` reference set on the edge nodes.
 - Any job from a full spec (YAML or JSON): `deploy_job` with `spec`. A job
   with the same name is updated; otherwise one is created.
 - `stop_job`, `rerun_job`, `pause_rollout`, `resume_rollout`: `jobId`.

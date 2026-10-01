@@ -116,6 +116,11 @@ export class Account {
     });
   }
 
+  /** Expanso Cloud's console, for pages the plugin cannot show itself. */
+  get consoleUrl(): string {
+    return this.deps.consoleUrl;
+  }
+
   async connections(): Promise<Connection[]> {
     await this.migrate();
 

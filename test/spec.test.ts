@@ -172,6 +172,9 @@ describe("redactForDiff", () => {
 });
 
 describe("restoreRedacted", () => {
+  const restore = (next: JobSpec, current?: JobSpec) =>
+    restoreRedacted(next, current, "https://console.test");
+
   const kafka = (brokers: string[], topic: string, password: string) => ({
     kafka_franz: {
       seed_brokers: brokers,
@@ -197,8 +200,8 @@ describe("restoreRedacted", () => {
   const current = pipeline(kafka(["broker.corp:9092"], "events", "real-pw"));
 
   it("round-trips a redacted spec to the original", () => {
-    expect(restoreRedacted(redactSpec(SPEC), SPEC)).toEqual(SPEC);
-    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+    expect(restore(redactSpec(SPEC), SPEC)).toEqual(SPEC);
+    expect(restore(redactSpec(current), current)).toEqual(current);
   });
 
   it("keeps an unchanged component's secrets when another component is edited", () => {
@@ -210,7 +213,7 @@ describe("restoreRedacted", () => {
       count: 5,
     };
 
-    expect(restoreRedacted(edited, current)).toEqual({
+    expect(restore(edited, current)).toEqual({
       ...pipeline(
         kafka(["broker.corp:9092"], "events", "real-pw"),
         "root = this.lowercase()",
@@ -221,22 +224,43 @@ describe("restoreRedacted", () => {
 
   it("refuses a kept secret when the component's brokers changed", () => {
     expect(() =>
-      restoreRedacted(
-        pipeline(kafka(["evil:9092"], "events", REDACTED)),
-        current,
-      ),
+      restore(pipeline(kafka(["evil:9092"], "events", REDACTED)), current),
     ).toThrow(
-      "config.output.kafka_franz holds a [redacted] value, but other fields in config.output.kafka_franz changed, so its secrets could go somewhere new. Put the real secrets for config.output.kafka_franz in the spec.",
+      "config.output.kafka_franz holds a saved secret, and other fields in config.output.kafka_franz changed, so the secret could go somewhere new. Secrets never go through chat. Make this change in Expanso Cloud's job editor (https://console.test), or replace the secret with an environment variable reference such as ${VAR_NAME}, which the edge node fills in.",
     );
+  });
+
+  it("never asks for a secret in the refusal", () => {
+    let message = "";
+
+    try {
+      restore(pipeline(kafka(["evil:9092"], "events", REDACTED)), current);
+    } catch (error) {
+      message = error instanceof SpecError ? error.message : "";
+    }
+
+    expect(message).toContain("config.output.kafka_franz");
+    expect(message).toContain("Expanso Cloud");
+    expect(message).toContain("${VAR_NAME}");
+    expect(message).not.toMatch(/paste|put the real|in the spec/i);
+  });
+
+  it("shows an environment variable reference and lets its component change", () => {
+    const sql = (host: string) =>
+      pipeline({ sql: { host, password: "${DB_PASS}" } });
+
+    expect(redactSpec(sql("db-1"))).toEqual(sql("db-1"));
+    expect(redactForDiff(sql("db-1"))).toEqual(sql("db-1"));
+    expect(restore(sql("db-2"), sql("db-1"))).toEqual(sql("db-2"));
   });
 
   it("refuses a kept secret when any other field of its component changed", () => {
     expect(() =>
-      restoreRedacted(
+      restore(
         pipeline(kafka(["broker.corp:9092"], "alerts", REDACTED)),
         current,
       ),
-    ).toThrow(/^config\.output\.kafka_franz holds a \[redacted\] value/);
+    ).toThrow(/^config\.output\.kafka_franz holds a saved secret/);
 
     const http = (count: number, authorization: string) => ({
       http_client: {
@@ -247,11 +271,8 @@ describe("restoreRedacted", () => {
     });
 
     expect(() =>
-      restoreRedacted(
-        pipeline(http(50, REDACTED)),
-        pipeline(http(10, "Bearer real")),
-      ),
-    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
+      restore(pipeline(http(50, REDACTED)), pipeline(http(10, "Bearer real"))),
+    ).toThrow(/^config\.output\.http_client holds a saved secret/);
   });
 
   it("counts a new value under a credential-looking key as a change", () => {
@@ -259,11 +280,11 @@ describe("restoreRedacted", () => {
       pipeline({ sql: { host: "db-1", password, token } });
 
     expect(() =>
-      restoreRedacted(sql(REDACTED, "new-token"), sql("real-pw", "old-token")),
-    ).toThrow(/^config\.output\.sql holds a \[redacted\] value/);
+      restore(sql(REDACTED, "new-token"), sql("real-pw", "old-token")),
+    ).toThrow(/^config\.output\.sql holds a saved secret/);
 
     expect(
-      restoreRedacted(sql(REDACTED, REDACTED), sql("real-pw", "old-token")),
+      restore(sql(REDACTED, REDACTED), sql("real-pw", "old-token")),
     ).toEqual(sql("real-pw", "old-token"));
   });
 
@@ -284,15 +305,12 @@ describe("restoreRedacted", () => {
     const original = http("https://idp.corp/token", "real-secret");
 
     expect(() =>
-      restoreRedacted(
-        http("https://attacker.example/token", REDACTED),
-        original,
-      ),
-    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
+      restore(http("https://attacker.example/token", REDACTED), original),
+    ).toThrow(/^config\.output\.http_client holds a saved secret/);
 
-    expect(
-      restoreRedacted(http("https://idp.corp/token", REDACTED), original),
-    ).toEqual(original);
+    expect(restore(http("https://idp.corp/token", REDACTED), original)).toEqual(
+      original,
+    );
   });
 
   it("refuses a kept secret when a URL with embedded credentials changed", () => {
@@ -302,16 +320,16 @@ describe("restoreRedacted", () => {
       });
 
     expect(() =>
-      restoreRedacted(
+      restore(
         http("https://x:y@attacker.example", REDACTED),
         http("https://u:p@ingest.corp", "Bearer real"),
       ),
-    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
+    ).toThrow(/^config\.output\.http_client holds a saved secret/);
   });
 
   it("keeps a top-level secret outside config", () => {
     expect(
-      restoreRedacted(
+      restore(
         { name: "renamed", password: REDACTED },
         { name: "p", password: "real" },
       ),
@@ -319,12 +337,12 @@ describe("restoreRedacted", () => {
   });
 
   it("refuses a redacted value with nothing to restore", () => {
-    expect(() => restoreRedacted({ password: REDACTED })).toThrow(
-      "password holds a [redacted] value, but the job has no password to keep it from. Put the real value in the spec, or leave the field out.",
+    expect(() => restore({ password: REDACTED })).toThrow(
+      /^password holds a \[redacted\] value, but the job has no saved password to keep it from\./,
     );
 
     expect(() =>
-      restoreRedacted(
+      restore(
         { config: { output: { sql: { password: REDACTED } } } },
         { config: { output: { http: { url: "x" } } } },
       ),
@@ -338,7 +356,7 @@ describe("restoreRedacted", () => {
     });
 
     expect(
-      restoreRedacted(
+      restore(
         broker([
           output("b", "https://b.example.com", REDACTED),
           output("a", "https://a.example.com", REDACTED),
@@ -356,12 +374,12 @@ describe("restoreRedacted", () => {
     );
 
     expect(() =>
-      restoreRedacted(
+      restore(
         broker([output("a", "https://attacker.example", REDACTED)]),
         broker([output("a", "https://a.example.com", "pw-a")]),
       ),
     ).toThrow(
-      /^config\.output\.broker\.outputs\[0\] holds a \[redacted\] value, but other fields/,
+      /^config\.output\.broker\.outputs\[0\] holds a saved secret, and other fields/,
     );
   });
 
@@ -369,7 +387,7 @@ describe("restoreRedacted", () => {
     const sql = (password: string) => ({ sql: { host: "db-1", password } });
 
     expect(
-      restoreRedacted(
+      restore(
         broker([sql(REDACTED), kafka(["k:9092"], "events", REDACTED)]),
         broker([kafka(["k:9092"], "events", "kafka-pw"), sql("sql-pw")]),
       ),
@@ -387,21 +405,21 @@ describe("restoreRedacted", () => {
     ]);
 
     expect(() =>
-      restoreRedacted(
+      restore(
         broker([
           http("https://b.example.com", REDACTED),
           http("https://a.example.com", REDACTED),
         ]),
         original,
       ),
-    ).toThrow(/^config\.output\.broker\.outputs\[0\] holds a \[redacted\]/);
+    ).toThrow(/^config\.output\.broker\.outputs\[0\] holds a saved secret/);
 
-    expect(restoreRedacted(redactSpec(original), original)).toEqual(original);
+    expect(restore(redactSpec(original), original)).toEqual(original);
   });
 
   it("refuses a named item that is not in the current list", () => {
     expect(() =>
-      restoreRedacted(
+      restore(
         broker([{ name: "c", http: { password: REDACTED } }]),
         broker([{ name: "a", http: { password: "pw-a" } }]),
       ),
@@ -411,15 +429,15 @@ describe("restoreRedacted", () => {
   });
 
   it("refuses when the current value is itself the placeholder", () => {
-    expect(() =>
-      restoreRedacted({ token: REDACTED }, { token: REDACTED }),
-    ).toThrow(SpecError);
+    expect(() => restore({ token: REDACTED }, { token: REDACTED })).toThrow(
+      SpecError,
+    );
   });
 
   it("leaves a spec without placeholders unchanged", () => {
     const spec: JobSpec = { name: "p", password: "typed-in" };
 
-    expect(restoreRedacted(spec, SPEC)).toEqual(spec);
+    expect(restore(spec, SPEC)).toEqual(spec);
   });
 });
 

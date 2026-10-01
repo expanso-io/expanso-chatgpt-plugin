@@ -204,16 +204,23 @@ make changes.
 
 Specs shown in chat hide values under credential-looking keys (password,
 token, key, secret, connection string, and similar) and URLs with embedded
-passwords. Leave `[redacted]` in an edited spec to keep the current value.
-A credential is kept only when the component holding it (an input, output,
-processor, cache, or resource; outside `config`, the top-level field) is
-otherwise unchanged, so a kept secret never follows a changed URL, broker, or
-topic. To change anything else in that component, put its real credentials
-in the spec. Edits to other components keep their credentials. In a list
-(broker outputs, processors, resources), each item is matched to its current
-one by `name` or `label`, by being the only item of its type, or by position.
-Otherwise the preview refuses and asks you to restate the value or add a
-label. The Fleet view's buttons use the same previews and show them before you
+passwords. A value that is only an environment variable reference, such as
+`${DB_PASS}`, is shown as written: Expanso Edge fills it in from the edge
+node's environment. Leave `[redacted]` in an edited spec to keep the current
+value. A credential is kept only when the component holding it (an input,
+output, processor, cache, or resource; outside `config`, the top-level field)
+is otherwise unchanged, so a kept secret never follows a changed URL, broker,
+or topic. Edits to other components keep their credentials. In a list (broker
+outputs, processors, resources), each item is matched to its current one by
+`name` or `label`, by being the only item of its type, or by position.
+
+Secrets never go through chat. When a change would touch a component that
+holds a saved secret, the preview refuses and points to Expanso Cloud's own
+job editor (`https://cloud.expanso.io` unless `EXPANSO_CONSOLE_URL` says
+otherwise), or suggests replacing the secret with a `${VAR_NAME}` reference
+set on the edge nodes.
+
+The Fleet view's buttons use the same previews and show them before you
 confirm.
 
 Not available, because the Expanso API has no endpoint for them: setting
