@@ -173,7 +173,10 @@ Tools that change only this plugin's own records, never Expanso:
 | `settings.*`           | Read or change `activeWorkspaceId` (a plugin preference, not Expanso). |
 
 Tools that change the fleet. ChatGPT asks you to confirm each one; the
-destructive ones are marked so ChatGPT says they cannot be undone.
+destructive ones are marked so ChatGPT says they cannot be undone. These
+tools and `preview_change` need the `fleet` scope; a connection made with the
+read-only plugin (`fleet:read`) gets the read tools only, so reconnect it to
+make changes.
 
 | Tool             | Expanso API call                                         | Destructive                   |
 | ---------------- | -------------------------------------------------------- | ----------------------------- |
@@ -202,7 +205,11 @@ destructive ones are marked so ChatGPT says they cannot be undone.
 Specs shown in chat hide values under credential-looking keys (password,
 token, key, secret, connection string, and similar) and URLs with embedded
 passwords. Leave `[redacted]` in an edited spec to keep the current value.
-The Fleet view's buttons use the same previews and show them before you
+In a list (outputs, brokers), a credential is kept only when its item can be
+matched safely: by `name` or `label`, by being the only item of its type, or
+by position when the visible values around the credential are unchanged.
+Otherwise the preview refuses and asks you to restate the value or add a
+label. The Fleet view's buttons use the same previews and show them before you
 confirm.
 
 Not available, because the Expanso API has no endpoint for them: setting
