@@ -113,16 +113,15 @@ interface Answer {
 }
 
 /** Explains why nothing can be read, with the single link that fixes it. */
-function connectionResult(error: ConnectionRequired) {
-  const { state } = error;
-
+function connectionText({ state }: ConnectionRequired): string {
   const action =
     state.status === "reconnect" ? "Reconnect it here" : "Connect one here";
 
-  return result(
-    { connection: { ...state } },
-    `${state.message}\n\n${action}: ${state.reconnectUrl}\nThe link works once, for ${ADD_LINK_TTL_SECONDS / 60} minutes.`,
-  );
+  return `${state.message}\n\n${action}: ${state.reconnectUrl}\nThe link works once, for ${ADD_LINK_TTL_SECONDS / 60} minutes.`;
+}
+
+function connectionResult(error: ConnectionRequired) {
+  return result({ connection: { ...error.state } }, connectionText(error));
 }
 
 /**
@@ -200,6 +199,10 @@ export function buildServer(options: ServerOptions): McpServer {
   }
 
   createMentions(server).setHandler(async ({ query }) => {
+    const active = await account.activeConnection();
+
+    if (!active || active.needsReconnect) return { items: [] };
+
     try {
       const { client, workspace } = await account.session();
 
@@ -795,7 +798,15 @@ export function buildServer(options: ServerOptions): McpServer {
     async (uri: URL, variables: Record<string, string | string[]>) => {
       const workspaceId = String(variables.workspaceId);
       const id = String(variables.id);
-      const { client, workspace } = await account.session();
+      const { client, workspace } = await account
+        .session()
+        .catch((error: unknown) => {
+          if (error instanceof ConnectionRequired) {
+            throw new Error(connectionText(error));
+          }
+
+          throw error;
+        });
 
       if (workspaceId !== workspace.workspaceId) {
         throw new Error(

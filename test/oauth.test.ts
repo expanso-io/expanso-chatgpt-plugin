@@ -822,7 +822,7 @@ describe("OAuth front door", () => {
 
     let id = 0;
 
-    return async (name: string, args: Record<string, string> = {}) => {
+    const rpc = async (method: string, params: Record<string, unknown>) => {
       id += 1;
 
       const response = await call("/mcp", {
@@ -833,17 +833,30 @@ describe("OAuth front door", () => {
           Accept: "application/json, text/event-stream",
           "MCP-Protocol-Version": "2025-11-25",
         },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id,
-          method: "tools/call",
-          params: { name, arguments: args },
-        }),
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
       });
 
       return response.text();
     };
+
+    const tool = (name: string, args: Record<string, string> = {}) =>
+      rpc("tools/call", { name, arguments: args });
+
+    return Object.assign(tool, { rpc });
   }
+
+  const MentionsSchema = z.object({
+    result: z.object({
+      structuredContent: z.object({ items: z.array(z.unknown()) }),
+    }),
+  });
+
+  const RpcErrorSchema = z.object({
+    error: z.object({ message: z.string() }),
+  });
+
+  const addLinkCount = async () =>
+    (await env.OAUTH_KV.list({ prefix: "app:addlink:" })).keys.length;
 
   const ENDPOINT_2 = "ws2.us1.cloud.expanso.io:9010";
 
@@ -1011,5 +1024,65 @@ describe("OAuth front door", () => {
       WorkspacesSchema.parse(JSON.parse(await tool("list_workspaces"))).result
         .structuredContent.workspaces,
     ).toEqual([{ workspaceId: "ws1", active: true, needsReconnect: true }]);
+  });
+
+  it("finds no mentions and mints no links until a workspace can be read", async () => {
+    const tool = await signIn();
+
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch({
+        ...cloudRoutes(),
+        [`POST ${CLOUD}/api/v1/auth/token`]: fail(
+          401,
+          "Invalid or expired API key",
+        ),
+      }).fetch,
+    );
+
+    await tool("fleet.open");
+
+    const mentions = async () =>
+      MentionsSchema.parse(
+        JSON.parse(await tool("search_mentions", { query: "ingest" })),
+      ).result.structuredContent.items;
+
+    const links = await addLinkCount();
+
+    expect(await mentions()).toEqual([]);
+    expect(await mentions()).toEqual([]);
+    expect(await addLinkCount()).toBe(links);
+
+    await tool("disconnect_workspace", { workspaceId: "ws1" });
+
+    expect(await mentions()).toEqual([]);
+    expect(await addLinkCount()).toBe(links);
+  });
+
+  it("gives the Reconnect link when a mentioned item cannot be read", async () => {
+    const tool = await signIn();
+
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch({
+        ...cloudRoutes(),
+        [`POST ${CLOUD}/api/v1/auth/token`]: fail(
+          401,
+          "Invalid or expired API key",
+        ),
+      }).fetch,
+    );
+
+    const { message } = RpcErrorSchema.parse(
+      JSON.parse(
+        await tool.rpc("resources/read", {
+          uri: "expanso://workspaces/ws1/jobs/job-ingest-7f3a",
+        }),
+      ),
+    ).error;
+
+    expect(message).toContain(
+      `Reconnect it here: ${BASE}/workspaces/add?token=`,
+    );
   });
 });

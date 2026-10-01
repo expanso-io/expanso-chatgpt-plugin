@@ -322,7 +322,7 @@ export class Account {
   }
 }
 
-/** Warns when the key expires within EXPIRY_WARNING_DAYS. */
+/** Warns when the key expires within EXPIRY_WARNING_DAYS or has expired. */
 export function expiryNotice(
   connection: Pick<Connection, "workspaceId" | "keyExpiresAt">,
   now: Date,
@@ -332,6 +332,10 @@ export function expiryNotice(
   const expiresAt = Date.parse(connection.keyExpiresAt);
 
   if (!Number.isFinite(expiresAt)) return undefined;
+
+  if (expiresAt <= now.getTime()) {
+    return `The API key for workspace ${connection.workspaceId} expired on ${connection.keyExpiresAt.slice(0, 10)}. Reconnect the workspace with a new key to keep access.`;
+  }
 
   const days = Math.ceil((expiresAt - now.getTime()) / DAY_MS);
 

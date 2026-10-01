@@ -288,13 +288,15 @@ describe("expiryNotice", () => {
   it.each([
     [undefined, undefined],
     ["2026-10-20T00:00:00Z", undefined],
-    ["2026-10-08T00:00:00Z", "in 7 days, on 2026-10-08"],
-    ["2026-10-01T12:00:00Z", "within a day"],
+    ["2026-10-08T00:00:00Z", "expires in 7 days, on 2026-10-08."],
+    ["2026-10-01T12:00:00Z", "expires within a day."],
+    ["2026-10-01T00:00:00Z", "expired on 2026-10-01."],
+    ["2026-09-28T00:00:00Z", "expired on 2026-09-28."],
   ])("for a key expiring %s", (keyExpiresAt, phrase) => {
     const notice = expiryNotice({ workspaceId: "ws1", keyExpiresAt }, now);
 
     if (phrase === undefined) expect(notice).toBeUndefined();
-    else expect(notice).toContain(`expires ${phrase}.`);
+    else expect(notice).toContain(phrase);
   });
 });
 
