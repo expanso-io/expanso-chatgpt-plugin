@@ -9,9 +9,14 @@ import {
   vi,
 } from "vitest";
 import { getPlatformProxy, type PlatformProxy } from "wrangler";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { Account } from "../src/account.js";
 import type { Env } from "../src/config.js";
+import { buildServer } from "../src/mcp/server.js";
+import { open } from "../src/crypto.js";
 import { apiKeysPageUrl } from "../src/config.js";
 import {
   LinkError,
@@ -1200,6 +1205,69 @@ describe("OAuth front door", () => {
 
     expect(message).toContain(
       `Reconnect it here: ${BASE}/workspaces/add?token=`,
+    );
+  });
+
+  it("offers previews and changes only to connections granted fleet", async () => {
+    const { identity } = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const account = new Account(identity, {
+      kv: env.OAUTH_KV,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      cloudUrl: CLOUD,
+      publicBaseUrl: BASE,
+      consoleUrl: "https://console.test",
+    });
+
+    const toolNames = async (scopes: string[]) => {
+      const server = buildServer({
+        account,
+        connections: [],
+        scopes,
+        appHtml: "<html></html>",
+        iconSvg: "<svg></svg>",
+      });
+
+      const client = new Client({ name: "test", version: "0" });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+
+      const { tools } = await client.listTools();
+
+      await client.close();
+
+      return tools.map((tool) => tool.name);
+    };
+
+    const changes = [
+      "preview_change",
+      "deploy_job",
+      "stop_job",
+      "rerun_job",
+      "delete_job",
+      "rollback_job",
+      "pause_rollout",
+      "resume_rollout",
+      "delete_node",
+    ];
+
+    const granted = await toolNames(["fleet", "logs"]);
+
+    expect(granted).toEqual(expect.arrayContaining(changes));
+
+    // A grant from the read-only plugin carries fleet:read, never fleet.
+    const readOnlyGrant = await toolNames(["fleet:read"]);
+
+    for (const name of changes) expect(readOnlyGrant).not.toContain(name);
+
+    expect(readOnlyGrant).toEqual(
+      expect.arrayContaining(["list_jobs", "get_job_spec", "fleet_dashboard"]),
     );
   });
 });

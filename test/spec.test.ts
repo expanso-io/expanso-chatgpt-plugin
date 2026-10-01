@@ -174,7 +174,7 @@ describe("restoreRedacted", () => {
       name: "telemetry",
       password: REDACTED,
       config: {
-        outputs: [{ password: REDACTED, topic: "new-topic" }, { url: "x" }],
+        outputs: [{ password: REDACTED, topic: "events" }, { url: "x" }],
         tokens: [REDACTED, "fresh-token"],
       },
     };
@@ -184,7 +184,7 @@ describe("restoreRedacted", () => {
       password: "fixture-password",
       config: {
         outputs: [
-          { password: "fixture-output-password", topic: "new-topic" },
+          { password: "fixture-output-password", topic: "events" },
           { url: "x" },
         ],
         tokens: ["fixture-token-a", "fresh-token"],
@@ -205,6 +205,28 @@ describe("restoreRedacted", () => {
         { config: { outputs: [{ password: "only-first" }] } },
       ),
     ).toThrow(/^config\.outputs\[1\]\.password is \[redacted\]/);
+  });
+
+  it("refuses to move credentials between reordered list items", () => {
+    const current: JobSpec = {
+      outputs: [
+        { url: "https://a.example.com", password: "password-a" },
+        { url: "https://b.example.com", password: "password-b" },
+      ],
+    };
+
+    const reordered: JobSpec = {
+      outputs: [
+        { url: "https://b.example.com", password: REDACTED },
+        { url: "https://a.example.com", password: REDACTED },
+      ],
+    };
+
+    expect(() => restoreRedacted(reordered, current)).toThrow(
+      /^outputs\[0\]\.password is \[redacted\]/,
+    );
+
+    expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
   });
 
   it("refuses when the current value is itself the placeholder", () => {

@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ConnectionRequired, type Account, type Session } from "../account.js";
+import { SCOPES } from "../config.js";
 import {
   applyChange,
   DESTRUCTIVE,
@@ -227,6 +228,7 @@ export function describePreview(preview: ChangePreview): string {
 export function registerControlTools(
   server: McpServer,
   account: Account,
+  scopes: readonly string[],
   onConnectionRequired: ConnectionAnswer,
 ) {
   server.registerTool(
@@ -254,6 +256,8 @@ export function registerControlTools(
         },
       ),
   );
+
+  if (!scopes.includes(SCOPES.fleet)) return;
 
   server.registerTool(
     "preview_change",

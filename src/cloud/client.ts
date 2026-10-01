@@ -11,9 +11,7 @@ import {
   NodePageSchema,
   NodeDeleteResponseSchema,
   NodeStatsSchema,
-  JobDiffResponseSchema,
   JobIdResponseSchema,
-  JobVersionDiffSchema,
   JobSpecEnvelopeSchema,
   JobVersionPageSchema,
   JobVersionSpecsSchema,
@@ -293,11 +291,6 @@ export class WorkspaceClient {
     });
   }
 
-  /** The orchestrator's own diff of a spec against the job of the same name. */
-  diffJob(spec: JobSpec): Promise<{ diff: string; warnings: string[] }> {
-    return this.send("PUT", "/jobs/-/diff", JobDiffResponseSchema, { spec });
-  }
-
   stopJob(id: string, reason?: string): Promise<{ job_id?: string }> {
     return this.send("POST", `${jobPath(id)}/stop`, JobIdResponseSchema, {
       reason,
@@ -364,17 +357,6 @@ export class WorkspaceClient {
         spec: specs[index]?.spec ?? undefined,
       })),
     };
-  }
-
-  jobVersionDiff(
-    id: string,
-    from: number,
-    to?: number,
-  ): Promise<z.output<typeof JobVersionDiffSchema>> {
-    return this.get(`${jobPath(id)}/versions/diff`, JobVersionDiffSchema, {
-      from,
-      to,
-    });
   }
 
   jobHistory(

@@ -875,7 +875,7 @@ export function buildServer(options: ServerOptions): McpServer {
     },
   );
 
-  registerControlTools(server, account, connectionResult);
+  registerControlTools(server, account, options.scopes, connectionResult);
 
   const profileSchema = z.object({
     id: z.string().min(1).regex(/\S/),

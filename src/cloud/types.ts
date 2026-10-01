@@ -226,19 +226,6 @@ export const PutJobResponseSchema = z.object({
   warnings,
 });
 
-/** PUT /jobs/-/diff answers with capitalized keys. */
-export const JobDiffResponseSchema = z
-  .object({
-    Diff: text,
-    Warnings: warnings,
-    diff: text,
-    warnings,
-  })
-  .transform((body) => ({
-    diff: body.Diff ?? body.diff ?? "",
-    warnings: body.Warnings ?? body.warnings ?? [],
-  }));
-
 export const JobIdResponseSchema = z.object({ job_id: text });
 
 export const RerunResponseSchema = z.object({
@@ -279,13 +266,6 @@ export const JobVersionSpecsSchema = z.object({
       }),
     )
     .nullish(),
-});
-
-export const JobVersionDiffSchema = z.object({
-  job_id: text,
-  from_version: z.number().optional(),
-  to_version: z.number().optional(),
-  diff: text,
 });
 
 const minMax = z

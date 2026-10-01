@@ -332,6 +332,66 @@ config:
     expect(writes()).toHaveLength(1);
   });
 
+  it("updates a job of the same name found on a later page", async () => {
+    const { ctx, requests } = setup({
+      [`GET ${API}/jobs`]: (request) =>
+        request.url.searchParams.get("next_token") === "page-2"
+          ? Response.json({ items: [job("running").job] })
+          : Response.json({
+              items: [{ id: "job-0", spec: { name: "sensor-sink-old" } }],
+              next_token: "page-2",
+            }),
+      [`GET ${API}/jobs/job-1`]: reply(job("running")),
+      [`GET ${API}/nodes`]: reply(NODES),
+      [`PUT ${API}/jobs/job-1`]: reply({ job: { id: "job-1" } }),
+    });
+
+    const preview = await previewChange(ctx, {
+      action: "deploy_job",
+      spec: NEW_SPEC.replace("edge-logs", "sensor-sink"),
+    });
+
+    expect(
+      requests
+        .filter((request) => request.url.pathname === "/api/v1/jobs")
+        .map((request) => request.url.searchParams.get("prefix")),
+    ).toEqual(["sensor-sink", "sensor-sink"]);
+
+    expect(preview.summary).toContain('Update pipeline "sensor-sink"');
+    expect(preview.next.arguments).toMatchObject({
+      operation: "update",
+      jobId: "job-1",
+    });
+    expect(preview.next.arguments.baseFingerprint).toEqual(expect.any(String));
+  });
+
+  it("refuses a create when a job of that name appeared after the preview", async () => {
+    let listed: JsonObject = { items: [] };
+
+    const { ctx, writes } = setup({
+      [`GET ${API}/jobs`]: () => Response.json(listed),
+      [`GET ${API}/jobs/job-1`]: reply(job("running")),
+      [`GET ${API}/nodes`]: reply(NODES),
+      [`PUT ${API}/jobs`]: reply({ job: { id: "job-new" } }),
+    });
+
+    const preview = await previewChange(ctx, {
+      action: "deploy_job",
+      spec: NEW_SPEC.replace("edge-logs", "sensor-sink"),
+    });
+
+    expect(preview.next.arguments).toMatchObject({ operation: "create" });
+
+    listed = { items: [job("running").job] };
+
+    await expect(
+      applyChange(ctx, "deploy_job", preview.next.arguments),
+    ).rejects.toThrow(/A job named sensor-sink now exists/);
+
+    // Only the dry run reached the workspace.
+    expect(writes()).toHaveLength(1);
+  });
+
   it("reports what the workspace said when the dry run fails", async () => {
     const { ctx } = setup({
       [`GET ${API}/jobs`]: reply({ items: [] }),
