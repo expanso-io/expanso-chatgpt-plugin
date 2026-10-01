@@ -28,4 +28,10 @@ what they would do in Expanso Cloud.
 - Logs are a bounded snapshot, not a live stream. If the snapshot is
   truncated or empty, say so and suggest a shorter lookback or a specific
   node instead of guessing.
-- Pass `workspaceId` only when the user names another linked workspace.
+- Every tool reads the active workspace, and its answer names it. To read
+  another connected workspace, call `list_workspaces`, then
+  `switch_workspace`; switching revokes nothing. `add_workspace` gives a
+  one-time link to connect a new one.
+- If a tool says the workspace needs connecting or reconnecting, give the
+  user its link. Never ask for an API key in chat.
+- Pass on any warning that a key expires soon.

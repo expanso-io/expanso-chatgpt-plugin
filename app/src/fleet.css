@@ -234,3 +234,16 @@ section h2 {
   font-weight: 400;
   opacity: 0.7;
 }
+
+.notice {
+  margin: 0;
+  font-size: 13px;
+  color: #b45309;
+}
+
+.reconnect {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 8px 0;
+}

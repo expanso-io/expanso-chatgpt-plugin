@@ -2,6 +2,8 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Account, GrantPropsSchema } from "./account.js";
 import { SCOPES, serviceConfig, type Env } from "./config.js";
+import { ADD_WORKSPACE_PATH } from "./links.js";
+import { handleAddWorkspace } from "./oauth/add-workspace.js";
 import { handleAuthorize } from "./oauth/authorize.js";
 import { buildServer } from "./mcp/server.js";
 import { FLEET_APP_HTML, ICON_SVG } from "./generated/assets.js";
@@ -35,12 +37,15 @@ const mcpHandler = {
       kv: env.OAUTH_KV,
       encryptionKey: env.LINK_ENCRYPTION_KEY,
       cloudUrl: config.cloudUrl,
+      publicBaseUrl: config.publicBaseUrl,
+      consoleUrl: config.consoleUrl,
     });
 
     const scopes = ctx.auth?.scope ?? [];
 
     const server = buildServer({
       account,
+      connections: await account.connections(),
       scopes,
       appHtml: FLEET_APP_HTML,
       iconSvg: ICON_SVG,
@@ -80,6 +85,15 @@ const defaultHandler = {
         oauth: env.OAUTH_PROVIDER,
         config,
         encryptionKey: env.LINK_ENCRYPTION_KEY,
+        kv: env.OAUTH_KV,
+      });
+    }
+
+    if (url.pathname === ADD_WORKSPACE_PATH) {
+      return handleAddWorkspace(request, {
+        config,
+        encryptionKey: env.LINK_ENCRYPTION_KEY,
+        kv: env.OAUTH_KV,
       });
     }
 

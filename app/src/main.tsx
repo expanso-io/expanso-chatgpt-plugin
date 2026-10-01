@@ -9,10 +9,12 @@ import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { z } from "zod";
 import {
+  ConnectionStateSchema,
   FleetSummarySchema,
   InventoryPageSchema,
   JobDetailSchema,
   WorkspaceInventorySchema,
+  type ConnectionStateView,
   type FleetSummary,
   type JobDetail,
   type WorkspaceInventory,
@@ -27,10 +29,25 @@ const openai = new OpenAIExtensions(app);
 
 let setSummaryFromHost: ((summary: FleetSummary) => void) | undefined;
 
+let setConnectionFromHost:
+  ((connection: ConnectionStateView["connection"]) => void) | undefined;
+
 let pendingSummary: FleetSummary | undefined;
+
+let pendingConnection: ConnectionStateView["connection"] | undefined;
 
 // Registered before connect so the initial tool result renders without a refetch.
 app.ontoolresult = (result) => {
+  const connection = ConnectionStateSchema.safeParse(result.structuredContent);
+
+  if (connection.success) {
+    if (setConnectionFromHost)
+      setConnectionFromHost(connection.data.connection);
+    else pendingConnection = connection.data.connection;
+
+    return;
+  }
+
   const parsed = FleetSummarySchema.safeParse(result.structuredContent);
 
   if (!parsed.success) return;
@@ -38,6 +55,14 @@ app.ontoolresult = (result) => {
   if (setSummaryFromHost) setSummaryFromHost(parsed.data);
   else pendingSummary = parsed.data;
 };
+
+/** The workspace cannot be read until it is connected or reconnected. */
+class ConnectionNeeded extends Error {
+  constructor(readonly connection: ConnectionStateView["connection"]) {
+    super(connection.message);
+    this.name = "ConnectionNeeded";
+  }
+}
 
 function applyHostContext(context: ReturnType<App["getHostContext"]>): void {
   if (context?.theme != null) applyDocumentTheme(context.theme);
@@ -59,6 +84,14 @@ async function callTool<Schema extends z.ZodType>(
   if (response.isError) {
     const text = response.content.find((item) => item.type === "text");
     throw new Error(text && "text" in text ? text.text : "The request failed.");
+  }
+
+  const connection = ConnectionStateSchema.safeParse(
+    response.structuredContent,
+  );
+
+  if (connection.success) {
+    throw new ConnectionNeeded(connection.data.connection);
   }
 
   const parsed = schema.safeParse(response.structuredContent);
@@ -113,10 +146,71 @@ function ago(iso?: string): string {
   return `${Math.round(seconds / 86400)} d ago`;
 }
 
+/** One clear action when the workspace needs connecting or reconnecting. */
+function Reconnect({
+  connection,
+}: {
+  connection: ConnectionStateView["connection"];
+}) {
+  const [opening, setOpening] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const reconnect = connection.status === "reconnect";
+
+  const openLink = async () => {
+    setOpening(true);
+    setFailed(false);
+
+    try {
+      const { isError } = await app.openLink({ url: connection.reconnectUrl });
+
+      setFailed(Boolean(isError));
+    } catch {
+      setFailed(true);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  return (
+    <main className="fleet">
+      <section className="reconnect" aria-labelledby="reconnect-title">
+        <h1 id="reconnect-title" className="title">
+          {reconnect
+            ? `Reconnect ${connection.workspaceId ?? "your workspace"}`
+            : "Connect a workspace"}
+        </h1>
+        <p className="lede">{connection.message}</p>
+        <button
+          type="button"
+          className="btn btn-primary cursor-interaction"
+          disabled={opening}
+          onClick={() => void openLink()}
+        >
+          {reconnect ? "Reconnect" : "Connect"}
+        </button>
+        {failed && (
+          <p className="note" role="alert">
+            The link did not open. Ask Expanso Fleet in the chat to connect a
+            workspace for a new link.
+          </p>
+        )}
+        <p className="foot">
+          The link works once, for ten minutes. You paste a new API key there;
+          ChatGPT never sees it.
+        </p>
+      </section>
+    </main>
+  );
+}
+
 function Fleet() {
   const [summary, setSummary] = useState<FleetSummary | undefined>(
     pendingSummary,
   );
+
+  const [connection, setConnection] = useState<
+    ConnectionStateView["connection"] | undefined
+  >(pendingConnection);
 
   const [detail, setDetail] = useState<JobDetail>();
   const [busy, setBusy] = useState(false);
@@ -160,10 +254,16 @@ function Fleet() {
   }, [workspaceId, inventoryLoads]);
 
   useEffect(() => {
-    setSummaryFromHost = setSummary;
+    setSummaryFromHost = (next) => {
+      setConnection(undefined);
+      setSummary(next);
+    };
+
+    setConnectionFromHost = setConnection;
 
     return () => {
       setSummaryFromHost = undefined;
+      setConnectionFromHost = undefined;
     };
   }, []);
 
@@ -174,9 +274,12 @@ function Fleet() {
     try {
       await work();
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "The request failed.",
-      );
+      if (caught instanceof ConnectionNeeded) setConnection(caught.connection);
+      else {
+        setError(
+          caught instanceof Error ? caught.message : "The request failed.",
+        );
+      }
     } finally {
       setBusy(false);
     }
@@ -221,6 +324,8 @@ function Fleet() {
     run(async () =>
       setDetail(await callTool("get_job", { jobId }, JobDetailSchema)),
     );
+
+  if (connection) return <Reconnect connection={connection} />;
 
   if (!summary) {
     return (
@@ -316,6 +421,11 @@ function Fleet() {
       {error && (
         <p className="error" role="alert">
           {error}
+        </p>
+      )}
+      {summary.notice && (
+        <p className="notice" role="status">
+          {summary.notice}
         </p>
       )}
       <dl className="stats">
