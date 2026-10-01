@@ -182,9 +182,15 @@ function restoreAt(
   if (isJsonArray(value)) {
     const items = isJsonArray(current) ? current : [];
 
-    return value.map((item, index) =>
-      restoreAt(item, matchingItem(item, items, index), `${path}[${index}]`),
-    );
+    return value.map((item, index) => {
+      const itemPath = `${path}[${index}]`;
+
+      return restoreAt(
+        item,
+        matchingItem(item, index, value, items, itemPath),
+        itemPath,
+      );
+    });
   }
 
   if (isJsonObject(value)) {
@@ -199,32 +205,103 @@ function restoreAt(
 }
 
 /**
- * The current list item an edited one stands for: the item with the same
- * name or label wherever it sits, otherwise the item at the same position
- * when it has the same component keys (kafka, sql, ...).
+ * The current list item an edited one with placeholders stands for: the item
+ * with the same name or label; else the only item of its component type
+ * (kafka, sql, ...); else the same-type item at its position, provided every
+ * value beside a placeholder is unchanged. Anything else is refused.
  */
 function matchingItem(
   item: JsonValue,
-  items: JsonValue[],
   index: number,
+  edited: JsonValue[],
+  items: JsonValue[],
+  path: string,
 ): JsonValue | undefined {
   if (!isJsonObject(item)) return items[index];
 
+  if (!hasPlaceholder(item)) return undefined;
+
   const identity = itemIdentity(item);
 
-  if (identity !== undefined) {
-    return items.find(
-      (candidate) =>
-        isJsonObject(candidate) && itemIdentity(candidate) === identity,
+  const match =
+    identity !== undefined
+      ? items.find(
+          (candidate) =>
+            isJsonObject(candidate) && itemIdentity(candidate) === identity,
+        )
+      : (onlyOfType(item, edited, items) ?? samePlace(item, items[index]));
+
+  if (match === undefined) {
+    throw new SpecError(
+      `${path} holds a ${REDACTED} value, but it no longer matches one item in the job's current list. Put the real value in the spec, or give the item a name or label.`,
     );
   }
 
-  const candidate = items[index];
+  return match;
+}
 
-  return isJsonObject(candidate) &&
-    componentKeys(candidate) === componentKeys(item)
-    ? candidate
+function onlyOfType(
+  item: JsonObject,
+  edited: JsonValue[],
+  items: JsonValue[],
+): JsonValue | undefined {
+  const keys = componentKeys(item);
+  const ofType = (value: JsonValue) =>
+    isJsonObject(value) && componentKeys(value) === keys;
+
+  const current = items.filter(ofType);
+
+  return edited.filter(ofType).length === 1 && current.length === 1
+    ? current[0]
     : undefined;
+}
+
+function samePlace(
+  item: JsonObject,
+  current: JsonValue | undefined,
+): JsonValue | undefined {
+  return isJsonObject(current) &&
+    componentKeys(current) === componentKeys(item) &&
+    besidePlaceholdersUnchanged(item, current)
+    ? current
+    : undefined;
+}
+
+/** Whether every scalar next to a placeholder still equals the current value. */
+function besidePlaceholdersUnchanged(
+  next: JsonValue,
+  current: JsonValue | undefined,
+): boolean {
+  if (isJsonArray(next)) {
+    return next.every((item, index) =>
+      besidePlaceholdersUnchanged(
+        item,
+        isJsonArray(current) ? current[index] : undefined,
+      ),
+    );
+  }
+
+  if (!isJsonObject(next)) return true;
+
+  const before: JsonObject = isJsonObject(current) ? current : {};
+  const entries = Object.entries(next);
+  const guarded = entries.some(([, value]) => value === REDACTED);
+
+  return entries.every(([key, value]) =>
+    isJsonArray(value) || isJsonObject(value)
+      ? besidePlaceholdersUnchanged(value, before[key])
+      : !guarded || value === REDACTED || value === before[key],
+  );
+}
+
+function hasPlaceholder(value: JsonValue): boolean {
+  if (value === REDACTED) return true;
+
+  if (isJsonArray(value)) return value.some(hasPlaceholder);
+
+  if (isJsonObject(value)) return Object.values(value).some(hasPlaceholder);
+
+  return false;
 }
 
 function itemIdentity(item: JsonObject): string | undefined {
