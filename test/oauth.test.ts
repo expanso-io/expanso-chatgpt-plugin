@@ -16,7 +16,6 @@ import { z } from "zod";
 import { Account } from "../src/account.js";
 import type { Env } from "../src/config.js";
 import { buildServer } from "../src/mcp/server.js";
-import { open } from "../src/crypto.js";
 import { apiKeysPageUrl } from "../src/config.js";
 import {
   LinkError,
@@ -944,7 +943,7 @@ describe("OAuth front door", () => {
 
     let id = 0;
 
-    const rpc = async (method: string, params: Record<string, unknown>) => {
+    const rpc = async (method: string, params: JSONRPCRequest["params"]) => {
       id += 1;
 
       const response = await call("/mcp", {

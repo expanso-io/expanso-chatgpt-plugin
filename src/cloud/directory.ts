@@ -8,11 +8,10 @@ import {
 
 // Every workspace a user can reach, and a status summary for each, from
 // Expanso Cloud's workspace directory (expanso-io/expanso-cloud#1967:
-// GET /api/v1/workspaces, GET /api/v1/workspaces/status, and
-// GET /api/v1/workspaces/{id}/status). Until Cloud serves those routes they
-// answer 404, the directory reports itself unavailable, and the Fleets view
-// falls back to the workspaces this connection already links, with status
-// read from each workspace's own orchestrator.
+// GET /api/v1/workspaces and GET /api/v1/workspaces/status). Until Cloud
+// serves those routes they answer 404, the directory reports itself
+// unavailable, and the Fleets view shows the workspaces this connection has
+// keys for, with status read from the active workspace's own orchestrator.
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -100,7 +99,7 @@ export class CloudFleetDirectory implements FleetDirectory {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
-    // Not deployed yet: the caller falls back to linked workspaces.
+    // Not deployed yet: the caller falls back to connected workspaces.
     if (response.status === 404 || response.status === 405) return undefined;
 
     if (!response.ok) {
