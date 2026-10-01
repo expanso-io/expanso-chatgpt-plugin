@@ -303,6 +303,13 @@ async function previewJobAction(
   const targets = await activeNodes(ctx.client, jobId);
   const warnings: string[] = [];
 
+  const baseFingerprint =
+    action === "rerun_job"
+      ? await fingerprint(
+          canonicalJson((await ctx.client.getJobSpec(jobId)).spec),
+        )
+      : undefined;
+
   if (
     (action === "pause_rollout" && job.state !== "deploying") ||
     (action === "resume_rollout" && job.state !== "rollout_paused")
@@ -328,6 +335,7 @@ async function previewJobAction(
       jobId,
       jobName: name,
       targetNodes: targets.shown,
+      baseFingerprint,
       reason: request.reason,
     },
     { summary, targetName: name, targets, warnings },
@@ -594,6 +602,10 @@ export async function applyChange(
   const id = required(jobId, "jobId");
 
   if (action === "rerun_job") {
+    const current = await ctx.client.getJobSpec(id);
+
+    await assertUnchanged(current.spec, args.baseFingerprint);
+
     const result = await ctx.client.rerunJob(id);
 
     return done(action, summary, {

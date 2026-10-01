@@ -146,34 +146,79 @@ function fnv1a(text: string): string {
 /**
  * Replaces every REDACTED in `next` with the value at the same path in
  * `current`. A REDACTED with nothing to restore is an error: the spec would
- * otherwise deploy the placeholder itself.
+ * otherwise deploy the placeholder itself. So is one whose surroundings
+ * changed: a scalar beside it, or beside an ancestor below the spec root
+ * (a url, host, or topic), that differs from `current` would send the kept
+ * secret somewhere new. List items have their own guard; see matchingItem.
  */
 export function restoreRedacted(next: JobSpec, current?: JobSpec): JobSpec {
-  return restoreObject(next, current, "");
+  return restoreObject(next, current, "", false);
 }
 
 function restoreObject(
   next: JobSpec,
   current: JobSpec | undefined,
   path: string,
+  inItem: boolean,
+  changed?: string,
 ): JobSpec {
+  const moved =
+    changed ??
+    (path && !inItem ? changedScalar(next, current, path) : undefined);
+
   return Object.fromEntries(
     Object.entries(next).map(([name, item]) => [
       name,
-      restoreAt(item, current?.[name], path ? `${path}.${name}` : name),
+      restoreAt(
+        item,
+        current?.[name],
+        path ? `${path}.${name}` : name,
+        inItem,
+        moved,
+      ),
     ]),
   );
+}
+
+/** The path of the first scalar in `next` that differs from `current`. */
+function changedScalar(
+  next: JobSpec,
+  current: JobSpec | undefined,
+  path: string,
+): string | undefined {
+  const entry = Object.entries(next).find(
+    ([name, value]) =>
+      isScalar(value) &&
+      (current?.[name] === undefined ||
+        canonicalJson(value) !== canonicalJson(current[name])),
+  );
+
+  return entry && `${path}.${entry[0]}`;
+}
+
+function isScalar(value: JsonValue): boolean {
+  if (isJsonArray(value)) return value.every(isScalar);
+
+  return !isJsonObject(value) && value !== REDACTED;
 }
 
 function restoreAt(
   value: JsonValue,
   current: JsonValue | undefined,
   path: string,
+  inItem: boolean,
+  changed?: string,
 ): JsonValue {
   if (value === REDACTED) {
     if (current === undefined || current === REDACTED) {
       throw new SpecError(
         `${path} is ${REDACTED}, but the job has no matching value there to keep. Put the real value in the spec, or leave the field out.`,
+      );
+    }
+
+    if (changed !== undefined) {
+      throw new SpecError(
+        `${path} is ${REDACTED}, but ${changed} changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.`,
       );
     }
 
@@ -190,6 +235,8 @@ function restoreAt(
         item,
         matchingItem(item, index, value, items, itemPath),
         itemPath,
+        inItem || isJsonObject(item),
+        isJsonObject(item) ? undefined : changed,
       );
     });
   }
@@ -199,6 +246,8 @@ function restoreAt(
       value,
       isJsonObject(current) ? current : undefined,
       path,
+      inItem,
+      changed,
     );
   }
 

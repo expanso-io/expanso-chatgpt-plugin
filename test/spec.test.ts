@@ -195,6 +195,77 @@ describe("restoreRedacted", () => {
     });
   });
 
+  describe("a credential beside a destination", () => {
+    const current: JobSpec = {
+      name: "sink",
+      count: 2,
+      config: {
+        output: {
+          http: {
+            url: "https://ingest.corp",
+            headers: { Authorization: "Bearer real-token" },
+            batching: { count: 10 },
+          },
+        },
+      },
+    };
+
+    const edit = (http: JobSpec): JobSpec => ({
+      ...current,
+      config: { output: { http } },
+    });
+
+    it("refuses to keep it when the url beside an ancestor changed", () => {
+      expect(() =>
+        restoreRedacted(
+          edit({
+            url: "https://attacker.example",
+            headers: { Authorization: REDACTED },
+            batching: { count: 10 },
+          }),
+          current,
+        ),
+      ).toThrow(
+        "config.output.http.headers.Authorization is [redacted], but config.output.http.url changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.",
+      );
+    });
+
+    it("refuses to keep it when a url is added beside it", () => {
+      expect(() =>
+        restoreRedacted(
+          edit({
+            url: "https://ingest.corp",
+            headers: { Authorization: REDACTED, Host: "attacker.example" },
+          }),
+          current,
+        ),
+      ).toThrow(/config\.output\.http\.headers\.Host changed/);
+    });
+
+    it("keeps it when only a sibling sub-object or the spec root changed", () => {
+      const restored = restoreRedacted(
+        {
+          ...edit({
+            url: "https://ingest.corp",
+            headers: { Authorization: REDACTED },
+            batching: { count: 50 },
+          }),
+          count: 5,
+        },
+        current,
+      );
+
+      expect(restored).toEqual({
+        ...edit({
+          url: "https://ingest.corp",
+          headers: { Authorization: "Bearer real-token" },
+          batching: { count: 50 },
+        }),
+        count: 5,
+      });
+    });
+  });
+
   it("round-trips a redacted spec to the original", () => {
     expect(restoreRedacted(redactSpec(SPEC), SPEC)).toEqual(SPEC);
   });

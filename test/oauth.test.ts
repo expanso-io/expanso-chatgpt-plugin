@@ -1269,4 +1269,54 @@ describe("OAuth front door", () => {
       expect.arrayContaining(["list_jobs", "get_job_spec", "fleet_dashboard"]),
     );
   });
+
+  it("keeps log access for a read-only plugin grant of logs:read", async () => {
+    const { identity } = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const account = new Account(identity, {
+      kv: env.OAUTH_KV,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      cloudUrl: CLOUD,
+      publicBaseUrl: BASE,
+      consoleUrl: "https://console.test",
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const readLogs = async (scopes: string[]) => {
+      const server = buildServer({
+        account,
+        connections: await account.connections(),
+        scopes,
+        appHtml: "<html></html>",
+        iconSvg: "<svg></svg>",
+      });
+
+      const client = new Client({ name: "test", version: "0" });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+
+      const result = JSON.stringify(
+        await client.callTool({
+          name: "get_job_logs",
+          arguments: { jobId: "job-ingest-7f3a" },
+        }),
+      );
+
+      await client.close();
+
+      return result;
+    };
+
+    const denied = "This connection was not granted log access";
+
+    expect(await readLogs(["fleet:read", "logs:read"])).not.toContain(denied);
+    expect(await readLogs(["fleet", "logs"])).not.toContain(denied);
+    expect(await readLogs(["fleet:read"])).toContain(denied);
+  });
 });

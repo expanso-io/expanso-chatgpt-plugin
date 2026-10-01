@@ -220,9 +220,9 @@ selector:
     region: us
 config:
   input:
-    http_server: { path: /ingest }
+    http_server: { path: /ingest-v2 }
   output:
-    sql: { host: db-2, password: "[redacted]", options: null }
+    sql: { host: db-1, password: "[redacted]", options: null }
 `;
 
     const preview = await previewChange(ctx, {
@@ -236,7 +236,7 @@ config:
     expect(JSON.stringify(preview)).not.toContain(SECRET);
     expect(preview.summary).toContain('Update pipeline "sensor-sink"');
     expect(preview.diff?.text).toContain("- ");
-    expect(preview.diff?.text).toContain("db-2");
+    expect(preview.diff?.text).toContain("/ingest-v2");
     expect(preview.next.arguments).toMatchObject({
       operation: "update",
       jobId: "job-1",
@@ -249,13 +249,35 @@ config:
     expect(deployed.url.pathname).toBe("/api/v1/jobs/job-1");
     expect(bodyOf(deployed)).toMatchObject({
       spec: {
-        config: { output: { sql: { host: "db-2", password: SECRET } } },
+        config: { output: { sql: { host: "db-1", password: SECRET } } },
       },
     });
 
     // Nulls in the current spec survive the round trip.
     expect(deployed.body).toContain('"options":null');
     expect(bodyOf(deployed)).not.toHaveProperty("dry_run");
+  });
+
+  it("refuses to preview a kept credential sent to a changed host", async () => {
+    const { ctx, writes } = setup({
+      [`GET ${API}/jobs/job-1`]: reply(job("running")),
+    });
+
+    const spec = JSON.stringify({
+      ...CURRENT_SPEC,
+      config: {
+        ...CURRENT_SPEC.config,
+        output: { sql: { host: "db-attacker", password: "[redacted]" } },
+      },
+    });
+
+    await expect(
+      previewChange(ctx, { action: "deploy_job", jobId: "job-1", spec }),
+    ).rejects.toThrow(
+      /config\.output\.sql\.password is \[redacted\], but config\.output\.sql\.host changed/,
+    );
+
+    expect(writes()).toHaveLength(0);
   });
 
   it("shows that a credential changed without showing either value", async () => {
@@ -595,6 +617,35 @@ describe("job actions", () => {
     expect(preview.destructive).toBe(false);
     expect(writes()[0].url.pathname).toBe("/api/v1/jobs/job-1/rerun");
     expect(result.version).toBe(4);
+  });
+
+  it("rerun_job refuses when the job was redeployed after the preview", async () => {
+    let current = job("degraded");
+
+    const { ctx, writes } = setup({
+      [`GET ${API}/jobs/job-1`]: () => Response.json(current),
+      [`GET ${API}/jobs/job-1/executions`]: reply(EXECUTIONS),
+      [`PUT ${API}/jobs/job-1/rerun`]: reply({ job_id: "job-1", version: 5 }),
+    });
+
+    const preview = await previewChange(ctx, {
+      action: "rerun_job",
+      jobId: "job-1",
+    });
+
+    current = {
+      job: {
+        id: "job-1",
+        spec: { ...CURRENT_SPEC, description: "redeployed elsewhere" },
+        status: { state: { state_type: "running" }, version: 4 },
+      },
+    };
+
+    await expect(
+      applyChange(ctx, "rerun_job", preview.next.arguments),
+    ).rejects.toThrow(/changed after this preview/);
+
+    expect(writes()).toHaveLength(0);
   });
 
   it("delete_job refuses a running job unless force is previewed", async () => {

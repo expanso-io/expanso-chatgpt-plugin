@@ -7,7 +7,7 @@ import { createMentions, createSettings } from "@openai/mcp-extensions/server";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ConnectionRequired, type Account, type Session } from "../account.js";
-import { SCOPES } from "../config.js";
+import { LEGACY_LOG_SCOPE, SCOPES } from "../config.js";
 import type { Connection } from "../connections.js";
 import { ADD_LINK_TTL_SECONDS } from "../links.js";
 import {
@@ -736,7 +736,10 @@ export function buildServer(options: ServerOptions): McpServer {
       annotations: readOnly,
     },
     ({ jobId, nodeId, lookbackMinutes, maxLines }) => {
-      if (!options.scopes.includes(SCOPES.logs)) {
+      if (
+        !options.scopes.includes(SCOPES.logs) &&
+        !options.scopes.includes(LEGACY_LOG_SCOPE)
+      ) {
         throw new Error(
           "This connection was not granted log access. Reconnect Expanso Fleet and allow logs.",
         );
