@@ -177,7 +177,7 @@ describe("restoreRedacted", () => {
       name: "telemetry",
       password: REDACTED,
       config: {
-        outputs: [{ password: REDACTED, topic: "new-topic" }, { url: "x" }],
+        outputs: [{ password: REDACTED, topic: "events" }, { url: "x" }],
         tokens: [REDACTED, "fresh-token"],
       },
     };
@@ -187,7 +187,7 @@ describe("restoreRedacted", () => {
       password: "fixture-password",
       config: {
         outputs: [
-          { password: "fixture-output-password", topic: "new-topic" },
+          { password: "fixture-output-password", topic: "events" },
           { url: "x" },
         ],
         tokens: ["fixture-token-a", "fresh-token"],
@@ -281,7 +281,7 @@ describe("restoreRedacted", () => {
     ).toThrow(/^config\.outputs\[1\] holds a \[redacted\] value/);
   });
 
-  it("keeps a list item's credential when a sibling field is edited", () => {
+  it("refuses a list item's credential when its topic changed", () => {
     const current: JobSpec = {
       outputs: [{ kafka: { topic: "events", sasl: { password: "kafka-pw" } } }],
     };
@@ -290,9 +290,82 @@ describe("restoreRedacted", () => {
       outputs: [{ kafka: { topic: "alerts", sasl: { password: REDACTED } } }],
     };
 
+    expect(() => restoreRedacted(edited, current)).toThrow(
+      "outputs[0].kafka.sasl.password is [redacted], but outputs[0].kafka.topic changed, so the kept secret would go to a new destination. Put the real value in the spec to send it there.",
+    );
+  });
+
+  it("keeps a list item's credential when another item is edited", () => {
+    const current: JobSpec = {
+      outputs: [
+        { kafka: { topic: "events", sasl: { password: "kafka-pw" } } },
+        { sql: { host: "db-1" } },
+      ],
+    };
+
+    const edited: JobSpec = {
+      outputs: [
+        { kafka: { topic: "events", sasl: { password: REDACTED } } },
+        { sql: { host: "db-2" } },
+      ],
+    };
+
     expect(restoreRedacted(edited, current)).toEqual({
-      outputs: [{ kafka: { topic: "alerts", sasl: { password: "kafka-pw" } } }],
+      outputs: [
+        { kafka: { topic: "events", sasl: { password: "kafka-pw" } } },
+        { sql: { host: "db-2" } },
+      ],
     });
+  });
+
+  it("refuses a labelled item's credential when its url changed", () => {
+    const current: JobSpec = {
+      outputs: [
+        {
+          label: "a",
+          http: {
+            url: "https://ingest.corp",
+            headers: { Authorization: "Bearer real" },
+          },
+        },
+      ],
+    };
+
+    const edited: JobSpec = {
+      outputs: [
+        {
+          label: "a",
+          http: {
+            url: "https://attacker.example",
+            headers: { Authorization: REDACTED },
+          },
+        },
+      ],
+    };
+
+    expect(() => restoreRedacted(edited, current)).toThrow(
+      /^outputs\[0\]\.http\.headers\.Authorization is \[redacted\], but outputs\[0\]\.http\.url changed/,
+    );
+  });
+
+  it("refuses the only item of a type when its url changed", () => {
+    const current: JobSpec = {
+      outputs: [
+        { http: { url: "https://ingest.corp", password: "pw" } },
+        { sql: { host: "db-1" } },
+      ],
+    };
+
+    const edited: JobSpec = {
+      outputs: [
+        { sql: { host: "db-1" } },
+        { http: { url: "https://attacker.example", password: REDACTED } },
+      ],
+    };
+
+    expect(() => restoreRedacted(edited, current)).toThrow(
+      /outputs\[1\]\.http\.url changed/,
+    );
   });
 
   it("refuses to swap credentials between reordered items of one type", () => {

@@ -149,33 +149,26 @@ function fnv1a(text: string): string {
  * otherwise deploy the placeholder itself. So is one whose surroundings
  * changed: a scalar beside it, or beside an ancestor below the spec root
  * (a url, host, or topic), that differs from `current` would send the kept
- * secret somewhere new. List items have their own guard; see matchingItem.
+ * secret somewhere new. The chain starts again at each list item, compared
+ * with the current item it was matched to.
  */
 export function restoreRedacted(next: JobSpec, current?: JobSpec): JobSpec {
-  return restoreObject(next, current, "", false);
+  return restoreObject(next, current, "");
 }
 
 function restoreObject(
   next: JobSpec,
   current: JobSpec | undefined,
   path: string,
-  inItem: boolean,
   changed?: string,
 ): JobSpec {
   const moved =
-    changed ??
-    (path && !inItem ? changedScalar(next, current, path) : undefined);
+    changed ?? (path ? changedScalar(next, current, path) : undefined);
 
   return Object.fromEntries(
     Object.entries(next).map(([name, item]) => [
       name,
-      restoreAt(
-        item,
-        current?.[name],
-        path ? `${path}.${name}` : name,
-        inItem,
-        moved,
-      ),
+      restoreAt(item, current?.[name], path ? `${path}.${name}` : name, moved),
     ]),
   );
 }
@@ -206,7 +199,6 @@ function restoreAt(
   value: JsonValue,
   current: JsonValue | undefined,
   path: string,
-  inItem: boolean,
   changed?: string,
 ): JsonValue {
   if (value === REDACTED) {
@@ -235,7 +227,6 @@ function restoreAt(
         item,
         matchingItem(item, index, value, items, itemPath),
         itemPath,
-        inItem || isJsonObject(item),
         isJsonObject(item) ? undefined : changed,
       );
     });
@@ -246,7 +237,6 @@ function restoreAt(
       value,
       isJsonObject(current) ? current : undefined,
       path,
-      inItem,
       changed,
     );
   }
