@@ -254,13 +254,59 @@ describe("restoreRedacted", () => {
     ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
   });
 
-  it("does not let secret values decide whether a component changed", () => {
+  it("counts a new value under a credential-looking key as a change", () => {
     const sql = (password: string, token: string) =>
       pipeline({ sql: { host: "db-1", password, token } });
 
-    expect(
+    expect(() =>
       restoreRedacted(sql(REDACTED, "new-token"), sql("real-pw", "old-token")),
-    ).toEqual(sql("real-pw", "new-token"));
+    ).toThrow(/^config\.output\.sql holds a \[redacted\] value/);
+
+    expect(
+      restoreRedacted(sql(REDACTED, REDACTED), sql("real-pw", "old-token")),
+    ).toEqual(sql("real-pw", "old-token"));
+  });
+
+  it("refuses a kept client secret when the oauth2 token_url changed", () => {
+    const http = (tokenUrl: string, secret: string) =>
+      pipeline({
+        http_client: {
+          url: "https://ingest.corp",
+          oauth2: {
+            enabled: true,
+            client_key: "id",
+            client_secret: secret,
+            token_url: tokenUrl,
+          },
+        },
+      });
+
+    const original = http("https://idp.corp/token", "real-secret");
+
+    expect(() =>
+      restoreRedacted(
+        http("https://attacker.example/token", REDACTED),
+        original,
+      ),
+    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
+
+    expect(
+      restoreRedacted(http("https://idp.corp/token", REDACTED), original),
+    ).toEqual(original);
+  });
+
+  it("refuses a kept secret when a URL with embedded credentials changed", () => {
+    const http = (url: string, authorization: string) =>
+      pipeline({
+        http_client: { url, headers: { Authorization: authorization } },
+      });
+
+    expect(() =>
+      restoreRedacted(
+        http("https://x:y@attacker.example", REDACTED),
+        http("https://u:p@ingest.corp", "Bearer real"),
+      ),
+    ).toThrow(/^config\.output\.http_client holds a \[redacted\] value/);
   });
 
   it("keeps a top-level secret outside config", () => {

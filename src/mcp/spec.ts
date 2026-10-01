@@ -173,9 +173,9 @@ const SPEC_LAYOUT: Layout = {
  * Replaces every REDACTED in `next` with the value at the same path in
  * `current`. A secret is kept only when the component holding it (an input,
  * output, processor, cache, or resource; outside config, the top-level field)
- * is identical to the current one once credentials are masked. Any other
- * change to that component could send the secret somewhere new, so its
- * secrets must be entered again.
+ * is identical to the current one apart from its REDACTED placeholders. Any
+ * other change to that component, a new credential included, could send the
+ * secret somewhere new, so its secrets must be entered again.
  */
 export function restoreRedacted(next: JobSpec, current?: JobSpec): JobSpec {
   return restoreParts(next, current, "", SPEC_LAYOUT);
@@ -202,10 +202,7 @@ function restoreParts(
         return [name, restoreParts(value, before[name], at, inner)];
       }
 
-      return [
-        name,
-        restoreComponent(value, before[name], at, SECRET_KEY.test(name)),
-      ];
+      return [name, restoreComponent(value, before[name], at)];
     }),
   );
 }
@@ -221,12 +218,7 @@ function restoreList(
     const at = `${path}[${index}]`;
 
     return hasPlaceholder(item)
-      ? restoreComponent(
-          item,
-          matchingItem(item, index, next, items, at),
-          at,
-          false,
-        )
+      ? restoreComponent(item, matchingItem(item, index, next, items, at), at)
       : item;
   });
 }
@@ -235,7 +227,6 @@ function restoreComponent(
   next: JsonValue,
   current: JsonValue | undefined,
   path: string,
-  secret: boolean,
 ): JsonValue {
   if (!hasPlaceholder(next)) return next;
 
@@ -245,16 +236,48 @@ function restoreComponent(
     );
   }
 
-  const mask = (value: JsonValue) =>
-    canonicalJson(redactAt(value, secret, () => REDACTED));
-
-  if (mask(next) !== mask(current)) {
+  if (!sameApartFromPlaceholders(next, current)) {
     throw new SpecError(
       `${path} holds a ${REDACTED} value, but other fields in ${path} changed, so its secrets could go somewhere new. Put the real secrets for ${path} in the spec.`,
     );
   }
 
   return fill(next, current, path);
+}
+
+/**
+ * Whether `next` equals `current` exactly, except where `next` holds REDACTED
+ * and `current` has a value there to restore.
+ */
+function sameApartFromPlaceholders(
+  next: JsonValue,
+  current: JsonValue | undefined,
+): boolean {
+  if (next === REDACTED) return current !== undefined;
+
+  if (isJsonArray(next)) {
+    return (
+      isJsonArray(current) &&
+      current.length === next.length &&
+      next.every((item, index) =>
+        sameApartFromPlaceholders(item, current[index]),
+      )
+    );
+  }
+
+  if (isJsonObject(next)) {
+    return (
+      isJsonObject(current) &&
+      componentKeys(current) === componentKeys(next) &&
+      Object.entries(next).every(([name, value]) =>
+        sameApartFromPlaceholders(value, current[name]),
+      )
+    );
+  }
+
+  return (
+    current !== undefined && canonicalJson(next) === canonicalJson(current)
+  );
 }
 
 /** Puts back each REDACTED from a current value of the same shape. */
