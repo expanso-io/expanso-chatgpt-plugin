@@ -13,9 +13,10 @@ import { canonicalJson } from "./confirm.js";
 
 // Job specs cross the chat boundary in both directions. On the way out,
 // values that look like credentials are replaced with REDACTED so they never
-// reach the model. On the way back, every REDACTED left in place is filled
-// from the job's current spec at the same path, so an edit keeps the
-// credentials it never saw.
+// reach the model. On the way back, a REDACTED left in place is filled from
+// the job's current spec only when its component is otherwise unchanged (see
+// restoreRedacted), so an edit keeps the credentials it never saw without
+// sending them anywhere new.
 
 export const REDACTED = "[redacted]";
 
