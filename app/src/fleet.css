@@ -174,11 +174,14 @@ section h2 {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .tab {
+  white-space: nowrap;
+  overflow-wrap: normal;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -307,7 +310,7 @@ section h2 {
 }
 
 .btn-danger {
-  color: #b3261e;
+  color: light-dark(#b3261e, #ff8a80);
   border-color: currentColor;
 }
 
@@ -320,11 +323,11 @@ section h2 {
 }
 
 .confirm-danger {
-  border-color: #b3261e;
+  border-color: light-dark(#b3261e, #ff8a80);
 }
 
 .confirm-danger h2 {
-  color: #b3261e;
+  color: light-dark(#b3261e, #ff8a80);
   opacity: 1;
 }
 
@@ -348,7 +351,7 @@ section h2 {
 }
 
 .diff-del {
-  color: #b3261e;
+  color: light-dark(#b3261e, #ff8a80);
 }
 
 .notice,
@@ -378,4 +381,23 @@ section h2 {
 
 .fleet-row .actions {
   flex-basis: 100%;
+}
+
+.state {
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .grid th:last-child,
+  .grid td:last-child {
+    display: none;
+  }
+
+  .grid th:first-child {
+    width: 34%;
+  }
+
+  .grid th:nth-child(2) {
+    width: 30%;
+  }
 }
