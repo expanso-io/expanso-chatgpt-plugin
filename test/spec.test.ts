@@ -174,7 +174,7 @@ describe("restoreRedacted", () => {
       name: "telemetry",
       password: REDACTED,
       config: {
-        outputs: [{ password: REDACTED, topic: "events" }, { url: "x" }],
+        outputs: [{ password: REDACTED, topic: "new-topic" }, { url: "x" }],
         tokens: [REDACTED, "fresh-token"],
       },
     };
@@ -184,7 +184,7 @@ describe("restoreRedacted", () => {
       password: "fixture-password",
       config: {
         outputs: [
-          { password: "fixture-output-password", topic: "events" },
+          { password: "fixture-output-password", topic: "new-topic" },
           { url: "x" },
         ],
         tokens: ["fixture-token-a", "fresh-token"],
@@ -207,26 +207,76 @@ describe("restoreRedacted", () => {
     ).toThrow(/^config\.outputs\[1\]\.password is \[redacted\]/);
   });
 
+  it("keeps a list item's credential when a sibling field is edited", () => {
+    const current: JobSpec = {
+      outputs: [{ kafka: { topic: "events", sasl: { password: "kafka-pw" } } }],
+    };
+
+    const edited: JobSpec = {
+      outputs: [{ kafka: { topic: "alerts", sasl: { password: REDACTED } } }],
+    };
+
+    expect(restoreRedacted(edited, current)).toEqual({
+      outputs: [{ kafka: { topic: "alerts", sasl: { password: "kafka-pw" } } }],
+    });
+  });
+
   it("refuses to move credentials between reordered list items", () => {
     const current: JobSpec = {
       outputs: [
-        { url: "https://a.example.com", password: "password-a" },
-        { url: "https://b.example.com", password: "password-b" },
+        { kafka: { topic: "events", password: "kafka-pw" } },
+        { sql: { host: "db-1", password: "sql-pw" } },
       ],
     };
 
     const reordered: JobSpec = {
       outputs: [
-        { url: "https://b.example.com", password: REDACTED },
-        { url: "https://a.example.com", password: REDACTED },
+        { sql: { host: "db-1", password: REDACTED } },
+        { kafka: { topic: "events", password: REDACTED } },
       ],
     };
 
     expect(() => restoreRedacted(reordered, current)).toThrow(
-      /^outputs\[0\]\.password is \[redacted\]/,
+      /^outputs\[0\]\.sql\.password is \[redacted\]/,
     );
 
     expect(restoreRedacted(redactSpec(current), current)).toEqual(current);
+  });
+
+  it("follows a named list item to wherever it moved", () => {
+    const current: JobSpec = {
+      outputs: [
+        { name: "a", http: { url: "https://a.example.com", password: "pw-a" } },
+        { name: "b", http: { url: "https://b.example.com", password: "pw-b" } },
+      ],
+    };
+
+    const reordered: JobSpec = {
+      outputs: [
+        {
+          name: "b",
+          http: { url: "https://b.example.com", password: REDACTED },
+        },
+        {
+          name: "a",
+          http: { url: "https://a.example.com", password: REDACTED },
+        },
+      ],
+    };
+
+    expect(restoreRedacted(reordered, current)).toEqual({
+      outputs: [
+        { name: "b", http: { url: "https://b.example.com", password: "pw-b" } },
+        { name: "a", http: { url: "https://a.example.com", password: "pw-a" } },
+      ],
+    });
+
+    expect(() =>
+      restoreRedacted(
+        { outputs: [{ name: "c", http: { password: REDACTED } }] },
+        current,
+      ),
+    ).toThrow(/^outputs\[0\]\.http\.password is \[redacted\]/);
   });
 
   it("refuses when the current value is itself the placeholder", () => {

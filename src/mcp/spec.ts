@@ -6,6 +6,7 @@ import {
   JobSpecSchema,
   jsonText,
   type JobSpec,
+  type JsonObject,
   type JsonValue,
 } from "../cloud/types.js";
 
@@ -179,15 +180,11 @@ function restoreAt(
   }
 
   if (isJsonArray(value)) {
-    return value.map((item, index) => {
-      const now = isJsonArray(current) ? current[index] : undefined;
+    const items = isJsonArray(current) ? current : [];
 
-      return restoreAt(
-        item,
-        isJsonObject(item) && !sameItem(item, now) ? undefined : now,
-        `${path}[${index}]`,
-      );
-    });
+    return value.map((item, index) =>
+      restoreAt(item, matchingItem(item, items, index), `${path}[${index}]`),
+    );
   }
 
   if (isJsonObject(value)) {
@@ -201,30 +198,41 @@ function restoreAt(
   return value;
 }
 
-/** Whether an edited list item is still the current item, apart from placeholders. */
-function sameItem(next: JsonValue, current: JsonValue | undefined): boolean {
-  if (next === REDACTED) return current !== undefined;
+/**
+ * The current list item an edited one stands for: the item with the same
+ * name or label wherever it sits, otherwise the item at the same position
+ * when it has the same component keys (kafka, sql, ...).
+ */
+function matchingItem(
+  item: JsonValue,
+  items: JsonValue[],
+  index: number,
+): JsonValue | undefined {
+  if (!isJsonObject(item)) return items[index];
 
-  if (isJsonArray(next)) {
-    return (
-      isJsonArray(current) &&
-      next.length === current.length &&
-      next.every((item, index) => sameItem(item, current[index]))
+  const identity = itemIdentity(item);
+
+  if (identity !== undefined) {
+    return items.find(
+      (candidate) =>
+        isJsonObject(candidate) && itemIdentity(candidate) === identity,
     );
   }
 
-  if (isJsonObject(next)) {
-    if (!isJsonObject(current)) return false;
+  const candidate = items[index];
 
-    const keys = Object.keys(next);
+  return isJsonObject(candidate) &&
+    componentKeys(candidate) === componentKeys(item)
+    ? candidate
+    : undefined;
+}
 
-    return (
-      keys.length === Object.keys(current).length &&
-      keys.every((key) => key in current && sameItem(next[key], current[key]))
-    );
-  }
+function itemIdentity(item: JsonObject): string | undefined {
+  return jsonText(item.name) ?? jsonText(item.label);
+}
 
-  return next === current;
+function componentKeys(item: JsonObject): string {
+  return Object.keys(item).sort().join("\n");
 }
 
 export interface SelectorSummary {

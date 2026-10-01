@@ -74,6 +74,9 @@ export const DESTRUCTIVE: Record<WriteAction, boolean> = {
 /** Target node names shown in a preview; the count covers the rest. */
 const SHOWN_NODES = 20;
 
+/** Jobs read while looking for one by exact name, across every page. */
+const NAME_LOOKUP_CAP = 20_000;
+
 /** Execution states that are still doing work on a node. */
 const ACTIVE_EXECUTION_STATES: ExecutionState[] = [
   "pending",
@@ -760,8 +763,14 @@ async function findJobByName(
   const listed = await collectAll(
     (page) => client.listJobs({ prefix: name, ...page }),
     (job) => job,
-    Number.POSITIVE_INFINITY,
+    NAME_LOOKUP_CAP,
   );
+
+  if (listed.nextToken) {
+    throw new PlanError(
+      `More than ${NAME_LOOKUP_CAP} jobs have names starting with "${name}". Give the jobId of the job to update.`,
+    );
+  }
 
   const match = listed.items.find(
     (job) =>
