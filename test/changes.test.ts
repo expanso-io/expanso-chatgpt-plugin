@@ -365,6 +365,25 @@ config:
     expect(preview.next.arguments.baseFingerprint).toEqual(expect.any(String));
   });
 
+  it("stops looking for a job by name after a generous cap", async () => {
+    const { ctx, writes } = setup({
+      [`GET ${API}/jobs`]: (request) =>
+        Response.json({
+          items: Array.from(
+            { length: Number(request.url.searchParams.get("limit")) },
+            (_, index) => ({ id: `job-${index}`, spec: { name: "other" } }),
+          ),
+          next_token: "more",
+        }),
+    });
+
+    await expect(
+      previewChange(ctx, { action: "deploy_job", spec: NEW_SPEC }),
+    ).rejects.toThrow(/More than 20000 jobs have names starting with/);
+
+    expect(writes()).toHaveLength(0);
+  });
+
   it("refuses a create when a job of that name appeared after the preview", async () => {
     let listed: JsonObject = { items: [] };
 
