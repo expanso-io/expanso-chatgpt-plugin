@@ -9,7 +9,7 @@ adds:
 
 - **A Fleet view in the ChatGPT sidebar.** Nodes online, jobs by state, jobs
   that need attention, recent failed or degraded executions, and offline
-  nodes for your default workspace, plus every job and every node grouped by
+  nodes for your active workspace, plus every job and every node grouped by
   health with filters and search.
 - **`@job` and `@node` mentions.** Type `@` in the composer to pick a job or
   node, then ask "why is this degraded?".
@@ -36,15 +36,36 @@ The service is a standalone Cloudflare Worker. It is both the MCP server and
 the OAuth authorization server that ChatGPT signs in through:
 
 1. When you connect the plugin, ChatGPT opens the service's sign-in page.
-2. You paste an Expanso API key and your workspace endpoint once. The service
-   exchanges the key with Expanso Cloud, confirms each workspace accepts it,
-   then seals the key with AES-256-GCM (a key held as a Worker secret) inside
-   the OAuth grant, which the OAuth library also encrypts at rest.
+2. You paste an Expanso API key and one workspace endpoint. The service
+   exchanges the key with Expanso Cloud, confirms the workspace accepts it,
+   then seals the key with AES-256-GCM (a key held as a Worker secret) and
+   caches it for that workspace. The OAuth grant holds only who you are.
 3. ChatGPT receives an access token for this service only. The Expanso API
    key never reaches ChatGPT, the plugin package, plugin settings, logs, or
    tool results.
-4. On each tool call the service exchanges the key for a one-hour Expanso
-   token and reads only from the linked workspaces.
+4. On each tool call the service exchanges the active workspace's key for a
+   one-hour Expanso token and reads only from that workspace.
+
+### Workspaces and keys
+
+Expanso Fleet reads one workspace at a time, with one key.
+
+- **One cached key per workspace.** Each workspace you connect keeps its own
+  sealed key, bound to your account and that workspace.
+- **Switching never revokes.** `switch_workspace` (or the Active workspace
+  setting) changes which cached workspace is read. The other keys stay
+  cached.
+- **Connecting another workspace.** `add_workspace` returns a one-time link,
+  valid for ten minutes, to a page where you paste a key and one endpoint.
+  The page only accepts a key for the same Expanso user and organization.
+  The new workspace becomes active.
+- **Unused connections expire.** Your cached workspaces expire together after
+  30 days without use. Use extends that, at most once every 12 hours.
+- **Disconnect** deletes a workspace's cached key. Expanso Cloud cannot revoke
+  keys for Expanso Fleet yet, so revoke the key on the workspace's Keys page.
+- **Expired or revoked keys.** When Expanso Cloud stops accepting a key, the
+  workspace is marked for reconnecting, and tools and the Fleet view offer one
+  Reconnect link. Tools also warn when a key expires within seven days.
 
 Workspace endpoints must be Expanso hosts (by default `*.expanso.io`), so the
 service cannot be pointed at other hosts.
@@ -55,12 +76,14 @@ the stream. The model only ever sees that snapshot.
 
 ## What is manual until Expanso Cloud adds it
 
-| Today                                                                                                | Planned                                                       |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Sign-in is API-key linking on this service's page.                                                   | "Sign in with Expanso" through MCP-compatible OAuth in Cloud. |
-| You type the workspace endpoint (Expanso Cloud: your workspace, then Endpoint). Several are allowed. | Pick the organization and workspace from a list.              |
-| Logs are a capped read of the live stream.                                                           | A bounded log snapshot endpoint with cursors.                 |
-| The key button opens Expanso Cloud; you open your workspace, then Keys.                              | Link straight to the workspace's Keys page.                   |
+| Today                                                                                          | Planned                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Sign-in is API-key linking on this service's page.                                             | "Sign in with Expanso" through MCP-compatible OAuth in Cloud.                  |
+| You type one workspace endpoint per connection (Expanso Cloud: your workspace, then Endpoint). | Pick the organization and workspace from a list.                               |
+| You create and paste a key for each workspace.                                                 | Cloud issues and rotates a key per connection (expanso-io/expanso-cloud#1967). |
+| Disconnect deletes the cached key; you revoke the key on the workspace's Keys page.            | Disconnect revokes the key in Cloud.                                           |
+| Logs are a capped read of the live stream.                                                     | A bounded log snapshot endpoint with cursors.                                  |
+| The key button opens Expanso Cloud; you open your workspace, then Keys.                        | Link straight to the workspace's Keys page.                                    |
 
 Expanso Cloud API keys have no read-only scope yet: the key you paste has full
 access to its workspace. Expanso Fleet only reads, and the key stays sealed on
@@ -96,7 +119,7 @@ This builds the plugin into `dist/plugin/expanso-fleet`, copies it to
    connection with no expiry. Paste it and the workspace's **Endpoint** into
    the page, then choose **Connect**. If something is wrong, the page says
    which value failed and why.
-4. Onboarding confirms your default workspace and opens the Fleet view.
+4. Onboarding confirms your active workspace and opens the Fleet view.
 5. Ask in plain words, or type `@Expanso` to aim a question at the plugin:
    "What jobs do I have on the network?", "Which nodes are healthy and which
    are not?", "What is failing right now, and why?". Type `@` and pick a job
@@ -109,20 +132,24 @@ work the same way; the onboarding skill is only in the plugin package.
 
 ## Tools
 
-| Tool              | What it returns                                                         |
-| ----------------- | ----------------------------------------------------------------------- |
-| `fleet.open`      | The Fleet view (sidebar entry point).                                   |
-| `fleet_overview`  | Every job and node: counts first (healthy vs not), then items by state. |
-| `list_nodes`      | Nodes with connectivity, labels, and resource usage.                    |
-| `get_node`        | One node and the executions placed on it.                               |
-| `list_jobs`       | Jobs with state; `degraded` is filtered locally.                        |
-| `get_job`         | One job with its executions and history.                                |
-| `list_executions` | Executions for a job or node, by state.                                 |
-| `get_execution`   | One execution with its state transitions and failure messages.          |
-| `recent_errors`   | The latest failed, degraded, or lost executions, with history.          |
-| `get_job_logs`    | A bounded log snapshot for a job from one node.                         |
-| `get_profile`     | The linked Expanso account, for telling connections apart.              |
-| `settings.*`      | Read or change `defaultWorkspaceId` (a plugin preference, not Expanso). |
+| Tool                   | What it returns                                                         |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `fleet.open`           | The Fleet view (sidebar entry point).                                   |
+| `fleet_overview`       | Every job and node: counts first (healthy vs not), then items by state. |
+| `list_nodes`           | Nodes with connectivity, labels, and resource usage.                    |
+| `get_node`             | One node and the executions placed on it.                               |
+| `list_jobs`            | Jobs with state; `degraded` is filtered locally.                        |
+| `get_job`              | One job with its executions and history.                                |
+| `list_executions`      | Executions for a job or node, by state.                                 |
+| `get_execution`        | One execution with its state transitions and failure messages.          |
+| `recent_errors`        | The latest failed, degraded, or lost executions, with history.          |
+| `get_job_logs`         | A bounded log snapshot for a job from one node.                         |
+| `get_profile`          | The linked Expanso account, for telling connections apart.              |
+| `list_workspaces`      | Connected workspaces, which one is active, and key expiry.              |
+| `switch_workspace`     | Make another connected workspace active; nothing is revoked.            |
+| `add_workspace`        | A one-time link to connect or reconnect a workspace.                    |
+| `disconnect_workspace` | Delete a workspace's cached key.                                        |
+| `settings.*`           | Read or change `activeWorkspaceId` (a plugin preference, not Expanso).  |
 
 Mentions resolve to `expanso://workspaces/{workspace}/jobs/{id}` and
 `expanso://workspaces/{workspace}/nodes/{id}` resources.
