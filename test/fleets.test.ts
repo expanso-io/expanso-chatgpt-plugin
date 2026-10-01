@@ -78,8 +78,6 @@ function directory(
   return {
     workspaces: async () => workspaces,
     statuses: async () => statuses,
-    status: async (id) =>
-      statuses?.find((status) => status.workspace_id === id),
   };
 }
 
@@ -189,7 +187,6 @@ describe("fleetsView without a Cloud directory", () => {
       statuses: async () => {
         throw new Error("directory down");
       },
-      status: async () => undefined,
     };
 
     const view = await fleetsView({
@@ -392,7 +389,6 @@ describe("CloudFleetDirectory", () => {
 
     await expect(directory.workspaces()).resolves.toBeUndefined();
     await expect(directory.statuses()).resolves.toBeUndefined();
-    await expect(directory.status("ws-a")).resolves.toBeUndefined();
   });
 
   it("reads lists under workspaces or items", async () => {
@@ -414,21 +410,6 @@ describe("CloudFleetDirectory", () => {
     await expect(generic.directory.workspaces()).resolves.toEqual([workspace]);
 
     await expect(generic.directory.statuses()).resolves.toEqual([status]);
-  });
-
-  it("reads one workspace's status from its own path", async () => {
-    const { directory, requests } = directoryWith({
-      [`GET ${CLOUD}/api/v1/workspaces/ws%20a/status`]: reply({
-        ...status,
-        workspace_id: "ws a",
-      }),
-    });
-
-    await expect(directory.status("ws a")).resolves.toMatchObject({
-      workspace_id: "ws a",
-    });
-
-    expect(requests[0].url.pathname).toBe("/api/v1/workspaces/ws%20a/status");
   });
 
   it("treats a body it cannot read like a missing route", async () => {

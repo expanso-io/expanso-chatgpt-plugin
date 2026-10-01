@@ -171,7 +171,7 @@ function restoreAt(
   if (value === REDACTED) {
     if (current === undefined || current === REDACTED) {
       throw new SpecError(
-        `${path} is ${REDACTED}, but the job has no value there to keep. Put the real value in the spec, or leave the field out.`,
+        `${path} is ${REDACTED}, but the job has no matching value there to keep. Put the real value in the spec, or leave the field out.`,
       );
     }
 
@@ -179,13 +179,15 @@ function restoreAt(
   }
 
   if (isJsonArray(value)) {
-    return value.map((item, index) =>
-      restoreAt(
+    return value.map((item, index) => {
+      const now = isJsonArray(current) ? current[index] : undefined;
+
+      return restoreAt(
         item,
-        isJsonArray(current) ? current[index] : undefined,
+        isJsonObject(item) && !sameItem(item, now) ? undefined : now,
         `${path}[${index}]`,
-      ),
-    );
+      );
+    });
   }
 
   if (isJsonObject(value)) {
@@ -197,6 +199,32 @@ function restoreAt(
   }
 
   return value;
+}
+
+/** Whether an edited list item is still the current item, apart from placeholders. */
+function sameItem(next: JsonValue, current: JsonValue | undefined): boolean {
+  if (next === REDACTED) return current !== undefined;
+
+  if (isJsonArray(next)) {
+    return (
+      isJsonArray(current) &&
+      next.length === current.length &&
+      next.every((item, index) => sameItem(item, current[index]))
+    );
+  }
+
+  if (isJsonObject(next)) {
+    if (!isJsonObject(current)) return false;
+
+    const keys = Object.keys(next);
+
+    return (
+      keys.length === Object.keys(current).length &&
+      keys.every((key) => key in current && sameItem(next[key], current[key]))
+    );
+  }
+
+  return next === current;
 }
 
 export interface SelectorSummary {

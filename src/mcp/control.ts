@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Account } from "../account.js";
+import { SCOPES } from "../config.js";
 import {
   applyChange,
   DESTRUCTIVE,
@@ -198,7 +199,11 @@ export function describePreview(preview: ChangePreview): string {
   return lines.join("\n");
 }
 
-export function registerControlTools(server: McpServer, account: Account) {
+export function registerControlTools(
+  server: McpServer,
+  account: Account,
+  scopes: readonly string[],
+) {
   server.registerTool(
     "get_job_spec",
     {
@@ -216,6 +221,8 @@ export function registerControlTools(server: McpServer, account: Account) {
       return result({ jobId: job.id, version: job.version, spec: yaml }, yaml);
     },
   );
+
+  if (!scopes.includes(SCOPES.fleet)) return;
 
   server.registerTool(
     "preview_change",

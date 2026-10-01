@@ -66,8 +66,6 @@ export interface FleetDirectory {
   workspaces(): Promise<DirectoryWorkspace[] | undefined>;
   /** Status for every reachable workspace, or undefined when Cloud has no status route yet. */
   statuses(): Promise<FleetStatus[] | undefined>;
-  /** Status for one workspace, or undefined when Cloud has no status route yet. */
-  status(workspaceId: string): Promise<FleetStatus | undefined>;
 }
 
 /** Reads the directory from Expanso Cloud with the connection's own token. */
@@ -84,13 +82,6 @@ export class CloudFleetDirectory implements FleetDirectory {
 
   statuses(): Promise<FleetStatus[] | undefined> {
     return this.get("/api/v1/workspaces/status", StatusListSchema);
-  }
-
-  async status(workspaceId: string): Promise<FleetStatus | undefined> {
-    return this.get(
-      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/status`,
-      FleetStatusSchema,
-    );
   }
 
   private async get<Schema extends z.ZodType>(

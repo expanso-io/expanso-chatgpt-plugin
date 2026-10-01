@@ -571,7 +571,7 @@ export async function applyChange(
 
     const result = jobId
       ? await deployOver(ctx.client, jobId, given, args.baseFingerprint)
-      : await ctx.client.putJob(restoreRedacted(given, undefined));
+      : await createJob(ctx.client, given);
 
     const job = jobView(result.job ?? {});
 
@@ -627,6 +627,19 @@ export async function applyChange(
   await simple[action]();
 
   return done(action, summary, { jobId });
+}
+
+/** Creates a job after checking no job of that name appeared since the preview. */
+async function createJob(client: ChangeClient, given: JobSpec) {
+  const name = specName(given);
+
+  if (name && (await findJobByName(client, name))) {
+    throw new PlanError(
+      `A job named ${name} now exists. Preview the change again.`,
+    );
+  }
+
+  return client.putJob(restoreRedacted(given, undefined));
 }
 
 /** Updates a job by ID after checking it still matches the preview. */
@@ -744,9 +757,13 @@ async function findJobByName(
   client: ChangeClient,
   name: string,
 ): Promise<{ id: string; spec: JobSpec; version?: number } | undefined> {
-  const page = await client.listJobs({ prefix: name, limit: 100 });
+  const listed = await collectAll(
+    (page) => client.listJobs({ prefix: name, ...page }),
+    (job) => job,
+    Number.POSITIVE_INFINITY,
+  );
 
-  const match = (page.items ?? []).find(
+  const match = listed.items.find(
     (job) =>
       job.spec?.name === name && job.status?.state?.state_type !== "deleted",
   );

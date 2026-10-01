@@ -688,7 +688,7 @@ export function buildServer(options: ServerOptions): McpServer {
     fleets,
   );
 
-  registerControlTools(server, account);
+  registerControlTools(server, account, options.scopes);
 
   const profileSchema = z.object({
     id: z.string().min(1).regex(/\S/),
