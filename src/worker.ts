@@ -120,8 +120,8 @@ function getProvider(env: Env, requestUrl: string): OAuthProvider<Env> {
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
     clientIdMetadataDocumentEnabled: true,
-    scopesSupported: [SCOPES.fleetRead, SCOPES.logsRead],
-    requiredScopes: [SCOPES.fleetRead],
+    scopesSupported: [SCOPES.fleet, SCOPES.logs],
+    requiredScopes: [SCOPES.fleet],
     resourceMetadata: {
       resource: `${publicBaseUrl}/mcp`,
       authorization_servers: [publicBaseUrl],

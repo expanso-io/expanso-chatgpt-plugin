@@ -7,7 +7,7 @@ import { createMentions, createSettings } from "@openai/mcp-extensions/server";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ConnectionRequired, type Account, type Session } from "../account.js";
-import { SCOPES } from "../config.js";
+import { LEGACY_LOG_SCOPE, SCOPES } from "../config.js";
 import type { Connection } from "../connections.js";
 import { ADD_LINK_TTL_SECONDS } from "../links.js";
 import {
@@ -16,7 +16,15 @@ import {
   type OpenLogSocket,
 } from "../cloud/logs.js";
 import type { ExecutionState } from "../cloud/types.js";
+import { registerControlTools } from "./control.js";
+import {
+  describeDashboard,
+  jobDashboard,
+  nodeDetail,
+  workspaceDashboard,
+} from "./dashboard.js";
 import { describeFleet, fleetSummary, listFiltered } from "./fleet.js";
+import { describeFleets, fleetsView } from "./fleets.js";
 import type { WorkspaceInventory } from "./contracts.js";
 import {
   describeCounts,
@@ -36,7 +44,7 @@ import {
 
 export const FLEET_APP_URI = "ui://expanso-fleet/app-v1";
 
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.2.0";
 
 const readOnly = {
   readOnlyHint: true,
@@ -125,8 +133,10 @@ function connectionResult(error: ConnectionRequired) {
 }
 
 /**
- * Builds the MCP server for one request. Every Expanso tool here only reads;
- * the workspace tools change which cached workspace is active, never Expanso.
+ * Builds the MCP server for one request. Tools registered here read Expanso,
+ * and the workspace tools change which cached workspace is active. The tools
+ * that change Expanso are in control.ts; each runs only with a signed preview
+ * the user confirmed.
  */
 export function buildServer(options: ServerOptions): McpServer {
   const { account } = options;
@@ -726,9 +736,12 @@ export function buildServer(options: ServerOptions): McpServer {
       annotations: readOnly,
     },
     ({ jobId, nodeId, lookbackMinutes, maxLines }) => {
-      if (!options.scopes.includes(SCOPES.logsRead)) {
+      if (
+        !options.scopes.includes(SCOPES.logs) &&
+        !options.scopes.includes(LEGACY_LOG_SCOPE)
+      ) {
         throw new Error(
-          "This connection was not granted log access. Reconnect Expanso Fleet and allow logs:read.",
+          "This connection was not granted log access. Reconnect Expanso Fleet and allow logs.",
         );
       }
 
@@ -760,6 +773,112 @@ export function buildServer(options: ServerOptions): McpServer {
       });
     },
   );
+
+  const dashboard = () =>
+    read(async ({ client, workspace }) => {
+      const view = await workspaceDashboard(client, workspace.workspaceId);
+
+      return { data: { ...view }, text: describeDashboard(view) };
+    });
+
+  server.registerTool(
+    "fleet_dashboard",
+    {
+      title: "Fleet dashboard",
+      description:
+        "Health over time for the active workspace: nodes online and CPU for the last 30 minutes, executions placed and finished per hour and failures per hour for the last day, the jobs failing most, and per-node load. Use for 'how is the fleet doing?' or 'what changed today?'.",
+      inputSchema: z.object({}),
+      annotations: readOnly,
+    },
+    dashboard,
+  );
+
+  server.registerTool(
+    "fleet.dashboard",
+    {
+      title: "Load the Fleet dashboard",
+      inputSchema: z.object({}),
+      annotations: readOnly,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    dashboard,
+  );
+
+  server.registerTool(
+    "node_dashboard",
+    {
+      title: "Node dashboard",
+      description:
+        "One node in the active workspace in detail: connection, CPU, memory, and disk for the last 30 minutes, and the executions placed on it by state.",
+      inputSchema: z.object({ nodeId: z.string() }),
+      annotations: readOnly,
+    },
+    ({ nodeId }) =>
+      read(async ({ client }) => {
+        const view = await nodeDetail(client, nodeId);
+        const last = view.resources.points.at(-1);
+
+        return {
+          data: { ...view },
+          text: `Node ${view.node.name ?? view.node.id} is ${view.node.connectionState}${last?.cpuPercent !== undefined ? `, CPU ${last.cpuPercent}%` : ""}. Executions: ${
+            Object.entries(view.executionsByState)
+              .map(([state, count]) => `${count} ${state}`)
+              .join(", ") || "none"
+          }.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "job_dashboard",
+    {
+      title: "Job dashboard",
+      description:
+        "One job in the active workspace in detail: its state on every node, failures per hour for the last day, recent history, and its versions (for rollback).",
+      inputSchema: z.object({ jobId: z.string() }),
+      annotations: readOnly,
+    },
+    ({ jobId }) =>
+      read(async ({ client }) => {
+        const view = await jobDashboard(client, jobId);
+
+        const failures = view.failures.reduce(
+          (sum, bucket) =>
+            sum + Object.values(bucket.counts).reduce((a, b) => a + b, 0),
+          0,
+        );
+
+        return {
+          data: { ...view },
+          text: `Job ${view.job.name ?? view.job.id} is ${view.job.state} on ${view.nodes.length} nodes (${
+            Object.entries(view.executionsByState)
+              .map(([state, count]) => `${count} ${state}`)
+              .join(", ") || "none"
+          }); ${failures} failed, degraded, or lost executions in the last day; ${view.versions.length} versions.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "fleets.list",
+    {
+      title: "Load fleets",
+      inputSchema: z.object({}),
+      annotations: readOnly,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    async () => {
+      const view = await fleetsView({
+        directory: account.directory(),
+        connections: await account.connections(),
+        activeClient: async () => (await account.session()).client,
+      });
+
+      return result({ ...view }, describeFleets(view));
+    },
+  );
+
+  registerControlTools(server, account, options.scopes, connectionResult);
 
   const profileSchema = z.object({
     id: z.string().min(1).regex(/\S/),

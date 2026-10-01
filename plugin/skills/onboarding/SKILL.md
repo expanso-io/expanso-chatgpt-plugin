@@ -18,8 +18,12 @@ connection page instead, because keys must not be pasted into a conversation.
    it works once, for ten minutes. Confirm the result from the tool; do not
    claim a switch or connection happened if the call fails.
 3. Call `fleet.open` with `{}` to open the Fleet view.
-4. Suggest a first question, for example "Which jobs need attention?" or
-   mentioning a job with `@` and asking why it is degraded.
+4. Tell the user once that Expanso Fleet can change their fleet (deploy,
+   stop, rerun, delete, roll back, remove nodes) and that every change is
+   shown as a preview and confirmed before it runs.
+5. Suggest a first question, for example "Which jobs need attention?", "How
+   is the fleet doing today?", or mentioning a job with `@` and asking why
+   it is degraded.
 
 If a tool says the workspace needs connecting or reconnecting, pass on the
 link it returns. Switching workspaces never revokes a key; only

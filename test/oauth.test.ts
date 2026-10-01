@@ -9,9 +9,13 @@ import {
   vi,
 } from "vitest";
 import { getPlatformProxy, type PlatformProxy } from "wrangler";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { Account } from "../src/account.js";
 import type { Env } from "../src/config.js";
+import { buildServer } from "../src/mcp/server.js";
 import { apiKeysPageUrl } from "../src/config.js";
 import {
   LinkError,
@@ -24,6 +28,7 @@ import {
   TEST_ENCRYPTION_KEY,
   fail,
   fakeFetch,
+  reply,
   serve,
   serveToken,
   type RecordedRequest,
@@ -294,7 +299,7 @@ describe("linking page", () => {
     redirectUri: "https://chatgpt.com/cb",
     redirectHost: "chatgpt.com",
     redirectIsLoopback: false,
-    scope: ["fleet:read"],
+    scope: ["fleet"],
   };
 
   it("offers a Get my key button that opens Expanso Cloud in a new tab", () => {
@@ -307,7 +312,9 @@ describe("linking page", () => {
     );
 
     expect(html).toContain("No expiry");
-    expect(html).toContain("full access to their workspace");
+    expect(html).toContain("full access to its workspace");
+    expect(html).toContain("asks you to confirm every change");
+    expect(html.toLowerCase()).not.toContain("read-only");
   });
 
   it("asks for one workspace endpoint in a single-line field", () => {
@@ -343,7 +350,7 @@ describe("linking page", () => {
         redirectUri: "https://evil.example/cb",
         redirectHost: 'evil.example"><img src=x>',
         redirectIsLoopback: false,
-        scope: ["fleet:read", '"><b>'],
+        scope: ["fleet", '"><b>'],
       },
       'h"andle',
     );
@@ -368,11 +375,30 @@ const ToolListSchema = z.object({
       z.object({
         name: z.string(),
         annotations: z
-          .object({ readOnlyHint: z.boolean() })
+          .object({ readOnlyHint: z.boolean(), destructiveHint: z.boolean() })
           .partial()
           .optional(),
       }),
     ),
+  }),
+});
+
+const ToolCallSchema = z.object({
+  result: z.object({
+    isError: z.boolean().optional(),
+    content: z.array(z.object({ text: z.string() })),
+  }),
+});
+
+const PreviewCallSchema = z.object({
+  result: z.object({
+    content: z.array(z.object({ text: z.string() })),
+    structuredContent: z.object({
+      next: z.object({
+        tool: z.string(),
+        arguments: z.record(z.string(), z.json()),
+      }),
+    }),
   }),
 });
 
@@ -463,7 +489,7 @@ describe("OAuth front door", () => {
       response_type: "code",
       client_id: clientId,
       redirect_uri: REDIRECT,
-      scope: "fleet:read logs:read",
+      scope: "fleet logs",
       state: "state-123",
       code_challenge: challenge,
       code_challenge_method: "S256",
@@ -494,8 +520,8 @@ describe("OAuth front door", () => {
 
     const body = new URLSearchParams({ handle, ...form });
 
-    body.append("scope", "fleet:read");
-    body.append("scope", "logs:read");
+    body.append("scope", "fleet");
+    body.append("scope", "logs");
 
     return call(`/authorize?${query}`, {
       method: "POST",
@@ -592,7 +618,7 @@ describe("OAuth front door", () => {
     expect(html).not.toContain(API_KEY);
   });
 
-  it("links the key, issues a token for the PKCE verifier only, and serves read-only tools", async () => {
+  it("links the key, issues a token for the PKCE verifier only, and serves fleet tools", async () => {
     const clientId = await register();
     const { verifier, challenge } = await pkce();
 
@@ -645,7 +671,7 @@ describe("OAuth front door", () => {
 
     const tokens = TokenSchema.parse(await issued.json());
 
-    expect(tokens.scope.split(" ").sort()).toEqual(["fleet:read", "logs:read"]);
+    expect(tokens.scope.split(" ").sort()).toEqual(["fleet", "logs"]);
 
     const rpc = (
       id: number,
@@ -677,44 +703,78 @@ describe("OAuth front door", () => {
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [
+        "delete_job",
+        "delete_node",
+        "deploy_job",
+        "fleet.dashboard",
         "fleet.inventory",
         "fleet.open",
         "fleet.summary",
+        "fleet_dashboard",
         "fleet_overview",
+        "fleets.list",
         "get_execution",
         "get_job",
         "get_job_logs",
+        "get_job_spec",
         "get_node",
         "get_profile",
+        "job_dashboard",
         "list_executions",
         "list_jobs",
         "list_nodes",
         "list_workspaces",
+        "node_dashboard",
+        "pause_rollout",
+        "preview_change",
         "recent_errors",
+        "rerun_job",
+        "resume_rollout",
+        "rollback_job",
         "search_mentions",
         "settings.read",
         "settings.update",
+        "stop_job",
         "switch_workspace",
         "add_workspace",
         "disconnect_workspace",
       ].sort(),
     );
 
-    // Nothing touches Expanso except to read it. These tools change only this
-    // plugin's own record of which workspaces are connected; settings.update
-    // comes from the settings helper, which sets no annotations.
+    // Every tool that changes Expanso says so, so ChatGPT asks the user to
+    // confirm; the destructive ones say that too. The workspace tools change
+    // only this plugin's own record of which workspaces are connected;
+    // settings.update comes from the settings helper, which sets no
+    // annotations. Everything else only reads.
     const pluginStateTools = new Set([
       "switch_workspace",
       "add_workspace",
       "disconnect_workspace",
     ]);
 
+    const writes = new Map([
+      ["deploy_job", true],
+      ["stop_job", true],
+      ["rerun_job", false],
+      ["delete_job", true],
+      ["rollback_job", true],
+      ["pause_rollout", false],
+      ["resume_rollout", false],
+      ["delete_node", true],
+    ]);
+
     for (const tool of tools) {
       if (tool.name === "settings.update") continue;
 
+      const destructive = writes.get(tool.name);
+
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(
-        !pluginStateTools.has(tool.name),
+        destructive === undefined && !pluginStateTools.has(tool.name),
       );
+
+      if (destructive !== undefined) {
+        expect(tool.annotations?.destructiveHint, tool.name).toBe(destructive);
+      }
     }
 
     const overview = await (
@@ -747,6 +807,67 @@ describe("OAuth front door", () => {
       running: 1,
       failed: 1,
     });
+
+    // A change runs only with the preview's own arguments.
+    const control = fakeFetch({
+      ...cloudRoutes(),
+      [`GET ${API}/jobs/job-ingest-7f3a`]: serve("job.json"),
+      [`GET ${API}/jobs/job-ingest-7f3a/executions`]: reply({
+        items: [{ id: "ex-1", node_id: "node-a" }],
+      }),
+      [`POST ${API}/jobs/job-ingest-7f3a/stop`]: reply({
+        job_id: "job-ingest-7f3a",
+      }),
+    });
+
+    vi.stubGlobal("fetch", control.fetch);
+
+    const previewCall = PreviewCallSchema.parse(
+      await (
+        await rpc(5, "tools/call", {
+          name: "preview_change",
+          arguments: { action: "stop_job", jobId: "job-ingest-7f3a" },
+        })
+      ).json(),
+    );
+
+    const next = previewCall.result.structuredContent.next;
+
+    expect(next.tool).toBe("stop_job");
+    expect(previewCall.result.content[0].text).toContain(
+      'DESTRUCTIVE: Stop job "ingest-sensors"',
+    );
+
+    const stops = () =>
+      control.requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.pathname.endsWith("/stop"),
+      );
+
+    const tampered = ToolCallSchema.parse(
+      await (
+        await rpc(6, "tools/call", {
+          name: "stop_job",
+          arguments: { ...next.arguments, jobId: "job-other" },
+        })
+      ).json(),
+    );
+
+    expect(tampered.result.isError).toBe(true);
+    expect(stops()).toHaveLength(0);
+
+    const stopped = ToolCallSchema.parse(
+      await (
+        await rpc(7, "tools/call", {
+          name: "stop_job",
+          arguments: next.arguments,
+        })
+      ).json(),
+    );
+
+    expect(stopped.result.isError).not.toBe(true);
+    expect(stopped.result.content[0].text).toContain("Done. Stop job");
+    expect(stops()).toHaveLength(1);
   });
 
   const ToolTextSchema = z.object({
@@ -822,7 +943,7 @@ describe("OAuth front door", () => {
 
     let id = 0;
 
-    const rpc = async (method: string, params: Record<string, unknown>) => {
+    const rpc = async (method: string, params: JSONRPCRequest["params"]) => {
       id += 1;
 
       const response = await call("/mcp", {
@@ -1084,5 +1205,118 @@ describe("OAuth front door", () => {
     expect(message).toContain(
       `Reconnect it here: ${BASE}/workspaces/add?token=`,
     );
+  });
+
+  it("offers previews and changes only to connections granted fleet", async () => {
+    const { identity } = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const account = new Account(identity, {
+      kv: env.OAUTH_KV,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      cloudUrl: CLOUD,
+      publicBaseUrl: BASE,
+      consoleUrl: "https://console.test",
+    });
+
+    const toolNames = async (scopes: string[]) => {
+      const server = buildServer({
+        account,
+        connections: [],
+        scopes,
+        appHtml: "<html></html>",
+        iconSvg: "<svg></svg>",
+      });
+
+      const client = new Client({ name: "test", version: "0" });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+
+      const { tools } = await client.listTools();
+
+      await client.close();
+
+      return tools.map((tool) => tool.name);
+    };
+
+    const changes = [
+      "preview_change",
+      "deploy_job",
+      "stop_job",
+      "rerun_job",
+      "delete_job",
+      "rollback_job",
+      "pause_rollout",
+      "resume_rollout",
+      "delete_node",
+    ];
+
+    const granted = await toolNames(["fleet", "logs"]);
+
+    expect(granted).toEqual(expect.arrayContaining(changes));
+
+    // A grant from the read-only plugin carries fleet:read, never fleet.
+    const readOnlyGrant = await toolNames(["fleet:read"]);
+
+    for (const name of changes) expect(readOnlyGrant).not.toContain(name);
+
+    expect(readOnlyGrant).toEqual(
+      expect.arrayContaining(["list_jobs", "get_job_spec", "fleet_dashboard"]),
+    );
+  });
+
+  it("keeps log access for a read-only plugin grant of logs:read", async () => {
+    const { identity } = await linkAccount(API_KEY, ENDPOINT, {
+      config,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const account = new Account(identity, {
+      kv: env.OAUTH_KV,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      cloudUrl: CLOUD,
+      publicBaseUrl: BASE,
+      consoleUrl: "https://console.test",
+      fetch: fakeFetch(cloudRoutes()).fetch,
+    });
+
+    const readLogs = async (scopes: string[]) => {
+      const server = buildServer({
+        account,
+        connections: await account.connections(),
+        scopes,
+        appHtml: "<html></html>",
+        iconSvg: "<svg></svg>",
+      });
+
+      const client = new Client({ name: "test", version: "0" });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+
+      const result = JSON.stringify(
+        await client.callTool({
+          name: "get_job_logs",
+          arguments: { jobId: "job-ingest-7f3a" },
+        }),
+      );
+
+      await client.close();
+
+      return result;
+    };
+
+    const denied = "This connection was not granted log access";
+
+    expect(await readLogs(["fleet:read", "logs:read"])).not.toContain(denied);
+    expect(await readLogs(["fleet", "logs"])).not.toContain(denied);
+    expect(await readLogs(["fleet:read"])).toContain(denied);
   });
 });

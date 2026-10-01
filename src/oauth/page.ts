@@ -13,8 +13,11 @@ export const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 
 const SCOPE_LABELS = new Map([
-  ["fleet:read", "Read nodes, jobs, and executions"],
-  ["logs:read", "Read bounded job log snapshots"],
+  [
+    "fleet",
+    "See and control your fleet: jobs, pipelines, nodes, and executions",
+  ],
+  ["logs", "Read bounded job log snapshots"],
 ]);
 
 /**
@@ -109,7 +112,7 @@ function getKeySection(apiKeysUrl: string | undefined): string {
       <li>Copy the key (it starts with <code>exp_ak_</code>) and paste it below.</li>
       <li>In the same workspace, copy its <strong>Endpoint</strong> and paste it below.</li>
     </ol>
-    <p class="note">Expanso Cloud keys have full access to their workspace; there are no read-only keys yet. Expanso Fleet itself only reads.</p>
+    <p class="note">The key has full access to its workspace. Expanso Fleet can deploy, stop, rerun, and delete jobs and change nodes with it, and ChatGPT asks you to confirm every change first.</p>
   </section>`;
 }
 
@@ -187,7 +190,7 @@ function pageShell(title: string, main: string): string {
 <body>
 <main>
   ${main}
-  <footer>Read-only. Expanso Fleet for ChatGPT cannot deploy, stop, or change anything in Expanso.</footer>
+  <footer>Expanso Fleet shows your fleet and changes it only when you confirm. Revoke the key in Expanso Cloud at any time to cut off access.</footer>
 </main>
 </body>
 </html>`;

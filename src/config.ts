@@ -29,9 +29,12 @@ export const DEFAULT_ENDPOINT_SUFFIXES = [".expanso.io"];
 export const DEFAULT_CONSOLE_URL = "https://cloud.expanso.io";
 
 export const SCOPES = {
-  fleetRead: "fleet:read",
-  logsRead: "logs:read",
+  fleet: "fleet",
+  logs: "logs",
 } as const;
+
+/** The log scope the read-only plugin granted; it still allows job_logs. */
+export const LEGACY_LOG_SCOPE = "logs:read";
 
 export interface ServiceConfig {
   publicBaseUrl: string;
